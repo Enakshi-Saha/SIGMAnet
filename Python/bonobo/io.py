@@ -6,7 +6,6 @@ import pandas as pd
 from scipy.stats import zscore
 from .timer import Timer
 import numpy as np
-from netZooPy.panda import calculations as calc
 import sys
 
 def check_expression_integrity(df):
