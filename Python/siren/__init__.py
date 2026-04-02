@@ -1,3 +1,3 @@
 from __future__ import absolute_import
 
-from .siren import siren
+from .siren import Siren
