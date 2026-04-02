@@ -1,6 +1,6 @@
 from __future__ import print_function
 import time
-from netZooPy.siren.timer import Timer
+from .timer import Timer
 import sys
 import os
 import pandas as pd
