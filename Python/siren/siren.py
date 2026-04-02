@@ -14,9 +14,9 @@ from sklearn.metrics import roc_auc_score, f1_score # To compute AUROC and F1
 from scipy.stats import pearsonr
 
 
-class Smaug():
+class siren():
     """
-    SMAUG
+    siren
 
 
     Parameters
@@ -40,7 +40,7 @@ class Smaug():
     We provided these "toy" data so that the user can test the method.
 
 
-    Sample SMAUG results:\b
+    Sample siren results:\b
         - Node1   Node2   Weight\n
         - gene1 cpg1	0.0	-0.951416589143\n
         - gene1 cpg2	0.0	-0.904241609324\n
@@ -58,7 +58,7 @@ class Smaug():
             expression_file,
             methylation_file
     ):
-        """Intialize instance of Smaug class and load data."""
+        """Intialize instance of siren class and load data."""
 
         self.expression_file = expression_file
         self.methylation_file = methylation_file
@@ -73,7 +73,7 @@ class Smaug():
         self.methylation_probes = None
         self.methylation_samples = None
         # prepare all the data
-        print('SMAUG: preparing expression and methylation')
+        print('siren: preparing expression and methylation')
         self._prepare_data()
         self.delta = None
         self.sirens = []
@@ -105,7 +105,7 @@ class Smaug():
 
     def run_siren(self, keep_in_memory=False, output_fmt=".hdf", output_folder='./siren_output/',
                    delta=None, precision='single', sample_names=[]):
-        """SMAUG algorithm
+        """siren algorithm
 
         Args:
             output_folder (str, optional): output folder. If an empty string is passed the matrix is automatically kept
@@ -168,7 +168,7 @@ class Smaug():
         print(delta, m)
         pop_precision, _ = get_precision_matrix_dragon(self.expression_data, self.methylation_data, lambdas)
 
-        print('SMAUG: We are starting to compute the networks...')
+        print('siren: We are starting to compute the networks...')
         if sample_names == []:
             sample_names = self.expression_samples
             sample_names = set(sample_names).intersection(set(self.methylation_samples))
@@ -185,8 +185,8 @@ class Smaug():
 
         for s, sample in enumerate(sample_names):
             sample_start = time.time()
-            # first run Smaug
-            print('SMAUG: network for sample %s' % str(sample))
+            # first run siren
+            print('siren: network for sample %s' % str(sample))
             if keep_in_memory:
                 result_siren, result_precision, result_pval_precision, result_pval_precision_adjusted = self.compute_individual_siren(
                     fulldata, pop_precision, z, s, sample, delta, keep_in_memory)
@@ -215,7 +215,7 @@ class Smaug():
         # mask_include = [True] * fulldata.shape[1]
         # mask_include[s] = False
 
-        print('SMAUG: computing network for sample %s' % str(sample))
+        print('siren: computing network for sample %s' % str(sample))
         # Compute covariance matrix from the rest of the data, leaving out sample
         # covariance_matrix = np.cov(fulldata[:, mask_include])
 
@@ -250,7 +250,7 @@ class Smaug():
         pval_precision_adjusted = self.benjamini_hochberg(pval_precision)
 
         if not keep_in_memory:
-            print('Saving SMAUG for sample %s' % (str(sample)))
+            print('Saving siren for sample %s' % (str(sample)))
             ssdragon = pd.DataFrame(ssdragon)
             ssprecision = pd.DataFrame(ssprecision)
             pval_precision = pd.DataFrame(pval_precision)
