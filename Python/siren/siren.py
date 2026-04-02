@@ -6,7 +6,7 @@ import os
 import pandas as pd
 import numpy as np
 import math
-from siren import io
+from . import io
 from netZooPy.dragon import *      # To load DRAGON
 from scipy.stats import norm # To get normal quantiles
 from scipy.stats import false_discovery_control as fdr # To get adjusted p-values
