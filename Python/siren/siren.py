@@ -14,7 +14,7 @@ from sklearn.metrics import roc_auc_score, f1_score # To compute AUROC and F1
 from scipy.stats import pearsonr
 
 
-class siren():
+class Siren():
     """
     siren
 
