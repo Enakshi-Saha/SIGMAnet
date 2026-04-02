@@ -161,7 +161,7 @@ class Siren():
 
         # Estimate OAS precision matrix
         oas = OAS(store_precision=True, assume_centered=True)
-        oas.fit(combined_matrix.T)
+        oas.fit(fulldata.T)
         pop_precision = oas.precision_
 
         print('siren: We are starting to compute the networks...')
