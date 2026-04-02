@@ -87,7 +87,7 @@ def prepare_data(data_filename, samples=None):
 
     if len(omics_data) != len(omics_genes):
         print(
-            "Duplicate symbols detected. Consider averaging before running SMAUG"
+            "Duplicate symbols detected. Consider averaging before running SIREN"
         )
 
     check_data_integrity(omics_data)
