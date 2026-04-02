@@ -12,6 +12,7 @@ from scipy.stats import norm # To get normal quantiles
 from scipy.stats import false_discovery_control as fdr # To get adjusted p-values
 from sklearn.metrics import roc_auc_score, f1_score # To compute AUROC and F1
 from scipy.stats import pearsonr
+from sklearn.covariance import OAS
 
 
 class Siren():
@@ -142,9 +143,6 @@ class Siren():
             if not os.path.exists(self.output_folder):
                 os.makedirs(self.output_folder)
 
-        # Compute lambda penalty parameters for DRAGON
-        lambdas, lambdas_landscape = estimate_penalty_parameters_dragon(self.expression_data, self.methylation_data)
-
         # Append both omics data
         fulldata = np.append(self.expression_data, self.methylation_data, axis=1).T
 
@@ -161,12 +159,10 @@ class Siren():
         self.delta = delta
         self.covariance_matrix = covariance_matrix
 
-        # Compute population dragon
-        m = (1-3*delta)/(1-delta)
-        lambdas = [x * m for x in lambdas]
-
-        print(delta, m)
-        pop_precision, _ = get_precision_matrix_dragon(self.expression_data, self.methylation_data, lambdas)
+        # Estimate OAS precision matrix
+        oas = OAS(store_precision=True, assume_centered=True)
+        oas.fit(combined_matrix.T)
+        pop_precision = oas.precision_
 
         print('siren: We are starting to compute the networks...')
         if sample_names == []:
