@@ -1,12 +1,12 @@
 from __future__ import print_function
 import time
-from netZooPy.smaug.timer import Timer
+from netZooPy.siren.timer import Timer
 import sys
 import os
 import pandas as pd
 import numpy as np
 import math
-from netZooPy.smaug import io
+from netZooPy.siren import io
 from netZooPy.dragon import *      # To load DRAGON
 from scipy.stats import norm # To get normal quantiles
 from scipy.stats import false_discovery_control as fdr # To get adjusted p-values
@@ -76,7 +76,7 @@ class Smaug():
         print('SMAUG: preparing expression and methylation')
         self._prepare_data()
         self.delta = None
-        self.smaugs = []
+        self.sirens = []
         self.precisions = []
         self.pvals = []
         self.adjPvals = []
@@ -103,7 +103,7 @@ class Smaug():
             self.expression_data = self.expression_data.T
             self.methylation_data = self.methylation_data.T
 
-    def run_smaug(self, keep_in_memory=False, output_fmt=".hdf", output_folder='./smaug_output/',
+    def run_siren(self, keep_in_memory=False, output_fmt=".hdf", output_folder='./siren_output/',
                    delta=None, precision='single', sample_names=[]):
         """SMAUG algorithm
 
@@ -118,7 +118,7 @@ class Smaug():
             precision (str, optional): matrix precision, defaults to single precision.
         """
 
-        smaug_start = time.time()
+        siren_start = time.time()
 
         # first let's reorder the expression data
 
@@ -188,20 +188,20 @@ class Smaug():
             # first run Smaug
             print('SMAUG: network for sample %s' % str(sample))
             if keep_in_memory:
-                result_smaug, result_precision, result_pval_precision, result_pval_precision_adjusted = self.compute_individual_smaug(
+                result_siren, result_precision, result_pval_precision, result_pval_precision_adjusted = self.compute_individual_siren(
                     fulldata, pop_precision, z, s, sample, delta, keep_in_memory)
-                self.smaugs.append(result_smaug)
+                self.sirens.append(result_siren)
                 self.precisions.append(result_precision)
                 self.pvals.append(result_pval_precision)
                 self.adjPvals.append(result_pval_precision_adjusted)
             else:
-                self.compute_individual_smaug(fulldata, pop_precision, z, s, sample, delta, keep_in_memory)
+                self.compute_individual_siren(fulldata, pop_precision, z, s, sample, delta, keep_in_memory)
 
         if keep_in_memory:
             return self
 
-    def compute_individual_smaug(self, fulldata, pop_precision, z, s, sample, delta, keep_in_memory):
-        """Runs smaug on one sample. All samples are saved separately.
+    def compute_individual_siren(self, fulldata, pop_precision, z, s, sample, delta, keep_in_memory):
+        """Runs siren on one sample. All samples are saved separately.
 
         Args:
             fulldata: combined expression and methylation
@@ -255,7 +255,7 @@ class Smaug():
             ssprecision = pd.DataFrame(ssprecision)
             pval_precision = pd.DataFrame(pval_precision)
             pval_precision_adjusted = pd.DataFrame(pval_precision_adjusted)
-            sfolder = self.output_folder + './smaug/'
+            sfolder = self.output_folder + './siren/'
             pfolder = self.output_folder + './precision/'
             pvalfolder = self.output_folder + './pval/'
             adjPvalfolder = self.output_folder + './adjPval/'
@@ -268,29 +268,29 @@ class Smaug():
             if not os.path.exists(adjPvalfolder):
                 os.makedirs(adjPvalfolder)
 
-            output_fn_smaug = sfolder + 'smaug_' + str(sample) + self.output_fmt
+            output_fn_siren = sfolder + 'siren_' + str(sample) + self.output_fmt
             output_fn_precision = pfolder + 'precision_' + str(sample) + self.output_fmt
             output_fn_pval = pvalfolder + 'pval_' + str(sample) + self.output_fmt
             output_fn_adjPval = adjPvalfolder + 'adjPval_' + str(sample) + self.output_fmt
             if self.output_fmt == '.h5':
-                ssdragon.to_hdf(output_fn_smaug, key='smaug', index=False)
+                ssdragon.to_hdf(output_fn_siren, key='siren', index=False)
                 ssprecision.to_hdf(output_fn_precision, key='precision', index=False)
                 pval_precision.to_hdf(output_fn_pval, key='pval', index=False)
                 pval_precision_adjusted.to_hdf(output_fn_adjPval, key='adjPval', index=False)
             elif self.output_fmt == '.csv':
-                ssdragon.to_csv(output_fn_smaug, index=False)
+                ssdragon.to_csv(output_fn_siren, index=False)
                 ssprecision.to_csv(output_fn_precision, index=False)
                 pval_precision.to_csv(output_fn_pval, index=False)
                 pval_precision_adjusted.to_csv(output_fn_adjPval, index=False)
             elif self.output_fmt == '.txt':
-                ssdragon.to_csv(output_fn_smaug, index=False, sep='\t')
+                ssdragon.to_csv(output_fn_siren, index=False, sep='\t')
                 ssprecision.to_csv(output_fn_precision, index=False, sep='\t')
                 pval_precision.to_csv(output_fn_pval, index=False, sep='\t')
                 pval_precision_adjusted.to_csv(output_fn_adjPval, index=False, sep='\t')
 
             else:
                 print('WARNING: output format (%s) not recognised. We are saving in hdf' % str(self.output_fmt))
-                ssdragon.to_hdf(output_fn_smaug, key='smaug', index=False)
+                ssdragon.to_hdf(output_fn_siren, key='siren', index=False)
                 ssprecision.to_hdf(output_fn_precision, key='precision', index=False)
                 pval_precision.to_hdf(output_fn_pval, key='pval', index=False)
                 pval_precision_adjusted.to_hdf(output_fn_adjPval, key='adjPval', index=False)
@@ -343,7 +343,7 @@ class Smaug():
         # Reshape back to 2D
         return adj_pvals.reshape(shape)
 
-def simulate_smaug_data_removeOnly(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
+def simulate_siren_data_removeOnly(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
     np.random.seed(seed)
     Theta = np.identity(p1 + p2)
     n11 = int(np.around(p1 * (p1 - 1) / 2 * eta11))
@@ -418,7 +418,7 @@ def simulate_smaug_data_removeOnly(eta11, eta12, eta22, p1, p2, epsilon, n, mix_
 
     return (X11, X12, X21, X22, Theta1, Theta2, Sigma1, Sigma2)
 
-def simulate_smaug_data(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
+def simulate_siren_data(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
     np.random.seed(seed)
     Theta = np.identity(p1 + p2)
     n11 = int(np.around(p1 * (p1 - 1) / 2 * eta11))
@@ -549,29 +549,29 @@ def compute_sampleSpecific_F1(Theta, adjPvals, pval_threshold = 0.05):
 
     return f1_scores
 
-def compute_sampleSpecific_correlation(Theta, smaugs):
+def compute_sampleSpecific_correlation(Theta, sirens):
     Theta0 = Theta.flatten()
     corrs = []
 
-    for smaug_matrix in smaugs:
-        smaug_matrix = smaug_matrix.flatten()
+    for siren_matrix in sirens:
+        siren_matrix = siren_matrix.flatten()
 
         # Compute Pearson correlation
-        cor, _ = pearsonr(Theta0, smaug_matrix)
+        cor, _ = pearsonr(Theta0, siren_matrix)
         corrs.append(cor)
 
     return corrs
 
-def compute_sampleSpecific_frobenius(Theta, smaugs):
+def compute_sampleSpecific_frobenius(Theta, sirens):
     frobs = []
 
-    for smaug_matrix in smaugs:
+    for siren_matrix in sirens:
         # Ensure same shape
-        if Theta.shape != smaug_matrix.shape:
-            raise ValueError(f"Shape mismatch: Theta {Theta.shape}, smaug {smaug_matrix.shape}")
+        if Theta.shape != siren_matrix.shape:
+            raise ValueError(f"Shape mismatch: Theta {Theta.shape}, siren {siren_matrix.shape}")
 
         # Compute Frobenius norm of difference
-        frob = np.linalg.norm(Theta - smaug_matrix, 'fro')
+        frob = np.linalg.norm(Theta - siren_matrix, 'fro')
         frobs.append(frob)
 
     return frobs
