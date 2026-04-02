@@ -614,8 +614,52 @@ def evaluate_dragon_mixture(X1, X2, mix_prop, Theta1, Theta2):
     return auc, f1, dcor, dfrob
 
 
+def evaluate_OAS_mixture(X1, X2, mix_prop, Theta1, Theta2):
+    n = X1.shape[0]
+    p1 = X1.shape[1]
+    p2 = X2.shape[1]
+    n1 = int(n * (1-mix_prop))
+    n2 = int(n * mix_prop)
+    expr1 = X1[:n1]
+    expr2 = X1[n1:]
+    meth1 = X2[:n1]
+    meth2 = X2[n1:]
 
+    # Group 1
+    combined1 = np.append(expr1, meth1, axis=1).T  # (p1+p2, n1)
+    oas1 = OAS(store_precision=True, assume_centered=True)
+    oas1.fit(combined1.T)  # OAS expects (n_samples, n_features)
+    r1 = oas1.precision_
 
+    Theta01 = ((np.abs(Theta1) > 0)).astype(int).flatten()
+    y_true1 = Theta01.flatten()
+    y_score1 = np.abs(r1).flatten()
+    auc1 = roc_auc_score(y_true1, y_score1)
+    f1_1 = f1_score(y_true1, (y_score1 > 0).astype(int))
+    dcor1, _ = pearsonr(Theta1.flatten(), r1.flatten())
+    dfrob1 = np.linalg.norm(Theta1 - r1, 'fro')
+
+    # Group 2
+    combined2 = np.append(expr2, meth2, axis=1).T  # (p1+p2, n2)
+    oas2 = OAS(store_precision=True, assume_centered=True)
+    oas2.fit(combined2.T)  # OAS expects (n_samples, n_features)
+    r2 = oas2.precision_
+
+    Theta02 = ((np.abs(Theta2) > 0)).astype(int).flatten()
+    y_true2 = Theta02.flatten()
+    y_score2 = np.abs(r2).flatten()
+    auc2 = roc_auc_score(y_true2, y_score2)
+    f1_2 = f1_score(y_true2, (y_score2 > 0).astype(int))
+    dcor2, _ = pearsonr(Theta2.flatten(), r2.flatten())
+    dfrob2 = np.linalg.norm(Theta2 - r2, 'fro')
+
+    # Weighted average
+    auc = auc1 * (1-mix_prop) + auc2 * mix_prop
+    f1 = f1_1 * (1-mix_prop) + f1_2 * mix_prop
+    dcor = dcor1 * (1-mix_prop) + dcor2 * mix_prop
+    dfrob = dfrob1 * (1-mix_prop) + dfrob2 * mix_prop
+
+    return auc, f1, dcor, dfrob
 
 
 
