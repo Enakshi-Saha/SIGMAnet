@@ -12,7 +12,7 @@ from scipy.stats import norm # To get normal quantiles
 from scipy.stats import false_discovery_control as fdr # To get adjusted p-values
 from sklearn.metrics import roc_auc_score, f1_score # To compute AUROC and F1
 from scipy.stats import pearsonr
-from sklearn.covariance import OAS
+from sklearn.covariance import OAS, ShrunkCovariance
 
 
 class Siren():
