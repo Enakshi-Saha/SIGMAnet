@@ -462,7 +462,7 @@ def simulate_homogeneous_data(eta11, eta12, eta22, p1, p2, epsilon, n, seed):
     return(X1, X2, Theta, Sigma)
 
 
-def simulate_heterogeneous_data(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
+def simulate_heterogeneous_data_2pop(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
     np.random.seed(seed)
     Theta = np.identity(p1 + p2)
     n11 = int(np.around(p1 * (p1 - 1) / 2 * eta11))
@@ -557,6 +557,108 @@ def simulate_heterogeneous_data(eta11, eta12, eta22, p1, p2, epsilon, n, mix_pro
     print(X1.shape, X2.shape)
 
     return (X11, X12, X21, X22, Theta1, Theta2, Sigma1, Sigma2)
+
+
+def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mix_props, seed):
+    """
+    mix_props: tuple of 3 proportions (p1, p2, p3) that sum to 1
+               e.g. (0.3, 0.3, 0.4)
+    Returns: X11, X12, X21, X22, X31, X32, Theta1, Theta2, Theta3, Sigma1, Sigma2, Sigma3
+    """
+    assert len(mix_props) == 3, "mix_props must have 3 elements"
+    assert abs(sum(mix_props) - 1.0) < 1e-6, "mix_props must sum to 1"
+
+    np.random.seed(seed)
+
+    def make_theta(eta11, eta12, eta22, p1, p2):
+        """Generate a random precision matrix."""
+        Theta = np.identity(p1 + p2)
+        IDs = np.cumsum([0, p1, p2])
+        n11 = int(np.around(p1 * (p1 - 1) / 2 * eta11))
+        n12 = int(np.around(p1 * p2 * eta12))
+        n22 = int(np.around(p2 * (p2 - 1) / 2 * eta22))
+        n11_IDs = np.random.choice(range(int(p1*(p1-1)/2)), size=n11, replace=False)
+        n12_IDs = np.random.choice(range(int(p1*p2)), size=n12, replace=False)
+        n22_IDs = np.random.choice(range(int(p2*(p2-1)/2)), size=n22, replace=False)
+        Theta11 = Theta[IDs[0]:IDs[1], IDs[0]:IDs[1]]
+        Theta12 = Theta[IDs[0]:IDs[1], IDs[1]:IDs[2]]
+        Theta22 = Theta[IDs[1]:IDs[2], IDs[1]:IDs[2]]
+        Theta11_vec = Theta11[np.triu_indices(p1, 1)]
+        Theta12_vec = Theta12.flatten()
+        Theta22_vec = Theta22[np.triu_indices(p2, 1)]
+        Theta11_vec[n11_IDs] = np.random.uniform(-1., 1., size=len(n11_IDs))
+        Theta12_vec[n12_IDs] = np.random.uniform(-1., 1., size=len(n12_IDs))
+        Theta22_vec[n22_IDs] = np.random.uniform(-1., 1., size=len(n22_IDs))
+        Theta11[np.triu_indices(p1, 1)] = Theta11_vec
+        Theta22[np.triu_indices(p2, 1)] = Theta22_vec
+        Theta[IDs[0]:IDs[1], IDs[1]:IDs[2]] = Theta12_vec.reshape((p1, p2))
+        Theta[IDs[0]:IDs[1], IDs[0]:IDs[1]] = Theta11
+        Theta[IDs[1]:IDs[2], IDs[1]:IDs[2]] = Theta22
+        Theta = Theta + Theta.T - np.identity(p1 + p2)
+        Theta = Theta - np.identity(p1 + p2) + np.diag(np.sum(abs(Theta), axis=0) + 0.0001)
+        A = np.zeros((p1+p2, p1+p2)) + np.sqrt(np.diag(Theta))
+        Theta = Theta / A / A.T
+        return Theta, IDs
+
+    # Generate 3 distinct precision matrices
+    # Theta1 is the base
+    Theta1, IDs = make_theta(eta11, eta12, eta22, p1, p2)
+
+    # Theta2: remove 10% nonzero edges from Theta1
+    def perturb_theta(Theta_base, seed_offset):
+        np.random.seed(seed + seed_offset)
+        Theta2 = Theta_base.copy()
+        off_diag_indices = np.triu_indices_from(Theta2, k=1)
+        zero_indices = np.where(Theta2[off_diag_indices] == 0)[0]
+        nonzero_indices = np.where(Theta2[off_diag_indices] != 0)[0]
+        n_flip_zero = max(1, int(0.1 * len(zero_indices)))
+        n_flip_nonzero = max(1, int(0.1 * len(nonzero_indices)))
+        add_indices = np.random.choice(zero_indices, size=n_flip_zero, replace=False)
+        remove_indices = np.random.choice(nonzero_indices, size=n_flip_nonzero, replace=False)
+        i_add = off_diag_indices[0][add_indices]
+        j_add = off_diag_indices[1][add_indices]
+        Theta2[i_add, j_add] = np.random.uniform(-1, 1, size=n_flip_zero)
+        Theta2[j_add, i_add] = Theta2[i_add, j_add]
+        i_remove = off_diag_indices[0][remove_indices]
+        j_remove = off_diag_indices[1][remove_indices]
+        Theta2[i_remove, j_remove] = 0.
+        Theta2[j_remove, i_remove] = 0.
+        Theta2 += np.diag(np.maximum(0.0001, np.sum(np.abs(Theta2), axis=0)))
+        return Theta2
+
+    Theta2 = perturb_theta(Theta1, seed_offset=1)
+    Theta3 = perturb_theta(Theta1, seed_offset=2)  # independently perturbed from Theta1
+
+    Sigma1 = np.linalg.inv(Theta1)
+    Sigma2 = np.linalg.inv(Theta2)
+    Sigma3 = np.linalg.inv(Theta3)
+
+    mu = np.zeros(p1 + p2)
+    n1 = int(round(n * mix_props[0]))
+    n2 = int(round(n * mix_props[1]))
+    n3 = n - n1 - n2  # ensure total sums to n
+
+    X1 = np.random.multivariate_normal(mean=mu, cov=Sigma1, size=n1)
+    X2 = np.random.multivariate_normal(mean=mu, cov=Sigma2, size=n2)
+    X3 = np.random.multivariate_normal(mean=mu, cov=Sigma3, size=n3)
+
+    noise11 = np.random.normal(0, epsilon[0], (n1, p1))
+    noise12 = np.random.normal(0, epsilon[1], (n1, p2))
+    noise21 = np.random.normal(0, epsilon[0], (n2, p1))
+    noise22 = np.random.normal(0, epsilon[1], (n2, p2))
+    noise31 = np.random.normal(0, epsilon[0], (n3, p1))
+    noise32 = np.random.normal(0, epsilon[1], (n3, p2))
+
+    X11 = X1[:, IDs[0]:IDs[1]] + noise11
+    X12 = X1[:, IDs[1]:IDs[2]] + noise12
+    X21 = X2[:, IDs[0]:IDs[1]] + noise21
+    X22 = X2[:, IDs[1]:IDs[2]] + noise22
+    X31 = X3[:, IDs[0]:IDs[1]] + noise31
+    X32 = X3[:, IDs[1]:IDs[2]] + noise32
+
+    print(f"n1={n1}, n2={n2}, n3={n3}")
+    return (X11, X12, X21, X22, X31, X32, Theta1, Theta2, Theta3, Sigma1, Sigma2, Sigma3)
+
 
 def compute_sampleSpecific_AUC(Theta, adjPvals):
     Theta0 = ((np.abs(Theta) > 0)).astype(int).flatten()
