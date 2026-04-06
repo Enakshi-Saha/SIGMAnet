@@ -782,8 +782,89 @@ def evaluate_dragon_mixture(X1, X2, mix_prop, Theta1, Theta2):
     
     return auc, f1, dcor, dfrob
 
-
 def evaluate_OAS_mixture(X1, X2, mix_props, Thetas):
+    n = X1.shape[0]
+    assert len(mix_props) == len(Thetas)
+
+    # Fit on ALL samples — no group knowledge
+    combined = np.append(X1, X2, axis=1)  # (n, p1+p2)
+    oas = OAS(store_precision=True, assume_centered=False)
+    oas.fit(combined)
+    r = oas.precision_
+
+    # Evaluate against each subgroup's Theta separately
+    aucs, f1s, dcors, dfrobs = [], [], [], []
+    for Theta in Thetas:
+        y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
+        y_score = np.abs(r).flatten()
+        aucs.append(roc_auc_score(y_true, y_score))
+        f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
+        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+
+    auc = sum(a * p for a, p in zip(aucs, mix_props))
+    f1 = sum(f * p for f, p in zip(f1s, mix_props))
+    dcor = sum(d * p for d, p in zip(dcors, mix_props))
+    dfrob = sum(d * p for d, p in zip(dfrobs, mix_props))
+    return auc, f1, dcor, dfrob
+
+
+def evaluate_LW_mixture(X1, X2, mix_props, Thetas):
+    n = X1.shape[0]
+    assert len(mix_props) == len(Thetas)
+
+    # Fit on ALL samples — no group knowledge
+    combined = np.append(X1, X2, axis=1)  # (n, p1+p2)
+    lw = LedoitWolf(store_precision=True, assume_centered=False)
+    lw.fit(combined)
+    r = lw.precision_
+
+    # Evaluate against each subgroup's Theta separately
+    aucs, f1s, dcors, dfrobs = [], [], [], []
+    for Theta in Thetas:
+        y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
+        y_score = np.abs(r).flatten()
+        aucs.append(roc_auc_score(y_true, y_score))
+        f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
+        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+
+    auc = sum(a * p for a, p in zip(aucs, mix_props))
+    f1 = sum(f * p for f, p in zip(f1s, mix_props))
+    dcor = sum(d * p for d, p in zip(dcors, mix_props))
+    dfrob = sum(d * p for d, p in zip(dfrobs, mix_props))
+    return auc, f1, dcor, dfrob
+
+
+def evaluate_GL_mixture(X1, X2, mix_props, Thetas):
+    n = X1.shape[0]
+    assert len(mix_props) == len(Thetas)
+
+    # Fit on ALL samples — no group knowledge
+    combined = np.append(X1, X2, axis=1)
+    gl = GraphicalLassoCV(assume_centered=False)
+    gl.fit(combined)
+    r = gl.precision_
+
+    # Evaluate against each subgroup's Theta separately
+    aucs, f1s, dcors, dfrobs = [], [], [], []
+    for Theta in Thetas:
+        y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
+        y_score = np.abs(r).flatten()
+        aucs.append(roc_auc_score(y_true, y_score))
+        f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
+        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+
+    auc = sum(a * p for a, p in zip(aucs, mix_props))
+    f1 = sum(f * p for f, p in zip(f1s, mix_props))
+    dcor = sum(d * p for d, p in zip(dcors, mix_props))
+    dfrob = sum(d * p for d, p in zip(dfrobs, mix_props))
+    return auc, f1, dcor, dfrob
+
+
+
+def evaluate_OAS_mixture_knownGroup(X1, X2, mix_props, Thetas):
     """
     mix_props: list of proportions e.g. [0.6, 0.4] or [0.3, 0.3, 0.4]
     Thetas: list of true precision matrices [Theta1, Theta2, ...] 
@@ -819,7 +900,7 @@ def evaluate_OAS_mixture(X1, X2, mix_props, Thetas):
     return auc, f1, dcor, dfrob
 
 
-def evaluate_LW_mixture(X1, X2, mix_props, Thetas):
+def evaluate_LW_mixture_knownGroup(X1, X2, mix_props, Thetas):
     n = X1.shape[0]
     assert len(mix_props) == len(Thetas)
     
@@ -851,7 +932,7 @@ def evaluate_LW_mixture(X1, X2, mix_props, Thetas):
     return auc, f1, dcor, dfrob
 
 
-def evaluate_GL_mixture(X1, X2, mix_props, Thetas):
+def evaluate_GL_mixture_knownGroup(X1, X2, mix_props, Thetas):
     n = X1.shape[0]
     assert len(mix_props) == len(Thetas)
     
