@@ -169,9 +169,14 @@ class Siren():
         l = l * m
         
         # Shrink toward diag(S)
-        S = np.cov(fulldata)  # (p, p)
-        Sigma = (1 - l) * S + l * np.diag(np.diag(S))
-        pop_precision = np.linalg.inv(Sigma)
+        # S = np.cov(fulldata)  # (p, p)
+        # Sigma = (1 - l) * S + l * np.diag(np.diag(S))
+        # pop_precision = np.linalg.inv(Sigma)
+
+        # Shrink using ShrunkCovariance with custom lambda
+        shrunk_cov = ShrunkCovariance(shrinkage=l, store_precision=True, assume_centered=False)
+        shrunk_cov.fit(fulldata.T)
+        pop_precision = shrunk_cov.precision_
 
         print('siren: We are starting to compute the networks...')
         if sample_names == []:
