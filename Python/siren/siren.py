@@ -764,133 +764,101 @@ def evaluate_dragon_mixture(X1, X2, mix_prop, Theta1, Theta2):
     return auc, f1, dcor, dfrob
 
 
-def evaluate_OAS_mixture(X1, X2, mix_prop, Theta1, Theta2):
+def evaluate_OAS_mixture(X1, X2, mix_props, Thetas):
+    """
+    mix_props: list of proportions e.g. [0.6, 0.4] or [0.3, 0.3, 0.4]
+    Thetas: list of true precision matrices [Theta1, Theta2, ...] 
+    """
     n = X1.shape[0]
-    p1 = X1.shape[1]
-    p2 = X2.shape[1]
-    n1 = int(n * (1-mix_prop))
-    n2 = int(n * mix_prop)
-    expr1 = X1[:n1]
-    expr2 = X1[n1:]
-    meth1 = X2[:n1]
-    meth2 = X2[n1:]
+    assert len(mix_props) == len(Thetas), "mix_props and Thetas must have same length"
+    
+    ns = [int(round(n * p)) for p in mix_props]
+    ns[-1] = n - sum(ns[:-1])  # ensure total sums to n
+    
+    aucs, f1s, dcors, dfrobs = [], [], [], []
+    start = 0
+    for i, (n_sub, Theta) in enumerate(zip(ns, Thetas)):
+        end = start + n_sub
+        expr_sub = X1[start:end]
+        meth_sub = X2[start:end]
+        combined = np.append(expr_sub, meth_sub, axis=1)
+        oas = OAS(store_precision=True, assume_centered=False)
+        oas.fit(combined)
+        r = oas.precision_
+        y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
+        y_score = np.abs(r).flatten()
+        aucs.append(roc_auc_score(y_true, y_score))
+        f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
+        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        start = end
 
-    # Group 1
-    combined1 = np.append(expr1, meth1, axis=1).T  # (p1+p2, n1)
-    oas1 = OAS(store_precision=True, assume_centered=False)
-    oas1.fit(combined1.T)  # OAS expects (n_samples, n_features)
-    r1 = oas1.precision_
-
-    Theta01 = ((np.abs(Theta1) > 0)).astype(int).flatten()
-    y_true1 = Theta01.flatten()
-    y_score1 = np.abs(r1).flatten()
-    auc1 = roc_auc_score(y_true1, y_score1)
-    f1_1 = f1_score(y_true1, (y_score1 > 0).astype(int))
-    dcor1, _ = pearsonr(Theta1.flatten(), r1.flatten())
-    dfrob1 = np.linalg.norm(Theta1 - r1, 'fro')
-
-    # Group 2
-    combined2 = np.append(expr2, meth2, axis=1).T  # (p1+p2, n2)
-    oas2 = OAS(store_precision=True, assume_centered=False)
-    oas2.fit(combined2.T)  # OAS expects (n_samples, n_features)
-    r2 = oas2.precision_
-
-    Theta02 = ((np.abs(Theta2) > 0)).astype(int).flatten()
-    y_true2 = Theta02.flatten()
-    y_score2 = np.abs(r2).flatten()
-    auc2 = roc_auc_score(y_true2, y_score2)
-    f1_2 = f1_score(y_true2, (y_score2 > 0).astype(int))
-    dcor2, _ = pearsonr(Theta2.flatten(), r2.flatten())
-    dfrob2 = np.linalg.norm(Theta2 - r2, 'fro')
-
-    # Weighted average
-    auc = auc1 * (1-mix_prop) + auc2 * mix_prop
-    f1 = f1_1 * (1-mix_prop) + f1_2 * mix_prop
-    dcor = dcor1 * (1-mix_prop) + dcor2 * mix_prop
-    dfrob = dfrob1 * (1-mix_prop) + dfrob2 * mix_prop
-
+    auc = sum(a * p for a, p in zip(aucs, mix_props))
+    f1 = sum(f * p for f, p in zip(f1s, mix_props))
+    dcor = sum(d * p for d, p in zip(dcors, mix_props))
+    dfrob = sum(d * p for d, p in zip(dfrobs, mix_props))
     return auc, f1, dcor, dfrob
 
 
-def evaluate_LW_mixture(X1, X2, mix_prop, Theta1, Theta2):
+def evaluate_LW_mixture(X1, X2, mix_props, Thetas):
     n = X1.shape[0]
-    p1 = X1.shape[1]
-    p2 = X2.shape[1]
-    n1 = int(n * (1-mix_prop))
-    n2 = int(n * mix_prop)
-    expr1 = X1[:n1]
-    expr2 = X1[n1:]
-    meth1 = X2[:n1]
-    meth2 = X2[n1:]
-    # Group 1
-    combined1 = np.append(expr1, meth1, axis=1).T
-    lw1 = LedoitWolf(store_precision=True, assume_centered=False)
-    lw1.fit(combined1.T)
-    r1 = lw1.precision_
-    Theta01 = ((np.abs(Theta1) > 0)).astype(int).flatten()
-    y_true1 = Theta01.flatten()
-    y_score1 = np.abs(r1).flatten()
-    auc1 = roc_auc_score(y_true1, y_score1)
-    f1_1 = f1_score(y_true1, (y_score1 > 0).astype(int))
-    dcor1, _ = pearsonr(Theta1.flatten(), r1.flatten())
-    dfrob1 = np.linalg.norm(Theta1 - r1, 'fro')
-    # Group 2
-    combined2 = np.append(expr2, meth2, axis=1).T
-    lw2 = LedoitWolf(store_precision=True, assume_centered=False)
-    lw2.fit(combined2.T)
-    r2 = lw2.precision_
-    Theta02 = ((np.abs(Theta2) > 0)).astype(int).flatten()
-    y_true2 = Theta02.flatten()
-    y_score2 = np.abs(r2).flatten()
-    auc2 = roc_auc_score(y_true2, y_score2)
-    f1_2 = f1_score(y_true2, (y_score2 > 0).astype(int))
-    dcor2, _ = pearsonr(Theta2.flatten(), r2.flatten())
-    dfrob2 = np.linalg.norm(Theta2 - r2, 'fro')
-    # Weighted average
-    auc = auc1 * (1-mix_prop) + auc2 * mix_prop
-    f1 = f1_1 * (1-mix_prop) + f1_2 * mix_prop
-    dcor = dcor1 * (1-mix_prop) + dcor2 * mix_prop
-    dfrob = dfrob1 * (1-mix_prop) + dfrob2 * mix_prop
+    assert len(mix_props) == len(Thetas)
+    
+    ns = [int(round(n * p)) for p in mix_props]
+    ns[-1] = n - sum(ns[:-1])
+
+    aucs, f1s, dcors, dfrobs = [], [], [], []
+    start = 0
+    for n_sub, Theta in zip(ns, Thetas):
+        end = start + n_sub
+        expr_sub = X1[start:end]
+        meth_sub = X2[start:end]
+        combined = np.append(expr_sub, meth_sub, axis=1)
+        lw = LedoitWolf(store_precision=True, assume_centered=False)
+        lw.fit(combined)
+        r = lw.precision_
+        y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
+        y_score = np.abs(r).flatten()
+        aucs.append(roc_auc_score(y_true, y_score))
+        f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
+        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        start = end
+
+    auc = sum(a * p for a, p in zip(aucs, mix_props))
+    f1 = sum(f * p for f, p in zip(f1s, mix_props))
+    dcor = sum(d * p for d, p in zip(dcors, mix_props))
+    dfrob = sum(d * p for d, p in zip(dfrobs, mix_props))
     return auc, f1, dcor, dfrob
 
 
-def evaluate_GL_mixture(X1, X2, mix_prop, Theta1, Theta2):
+def evaluate_GL_mixture(X1, X2, mix_props, Thetas):
     n = X1.shape[0]
-    p1 = X1.shape[1]
-    p2 = X2.shape[1]
-    n1 = int(n * (1-mix_prop))
-    n2 = int(n * mix_prop)
-    expr1 = X1[:n1]
-    expr2 = X1[n1:]
-    meth1 = X2[:n1]
-    meth2 = X2[n1:]
-    # Group 1
-    combined1 = np.append(expr1, meth1, axis=1).T
-    gl1 = GraphicalLassoCV(assume_centered=False)
-    gl1.fit(combined1.T)
-    r1 = gl1.precision_
-    Theta01 = ((np.abs(Theta1) > 0)).astype(int).flatten()
-    y_true1 = Theta01.flatten()
-    y_score1 = np.abs(r1).flatten()
-    auc1 = roc_auc_score(y_true1, y_score1)
-    f1_1 = f1_score(y_true1, (y_score1 > 0).astype(int))
-    dcor1, _ = pearsonr(Theta1.flatten(), r1.flatten())
-    dfrob1 = np.linalg.norm(Theta1 - r1, 'fro')
-    # Group 2
-    combined2 = np.append(expr2, meth2, axis=1).T
-    gl2 = GraphicalLassoCV(assume_centered=False)
-    gl2.fit(combined2.T)
-    r2 = gl2.precision_
-    Theta02 = ((np.abs(Theta2) > 0)).astype(int).flatten()
-    y_true2 = Theta02.flatten()
-    y_score2 = np.abs(r2).flatten()
-    auc2 = roc_auc_score(y_true2, y_score2)
-    f1_2 = f1_score(y_true2, (y_score2 > 0).astype(int))
-    dcor2, _ = pearsonr(Theta2.flatten(), r2.flatten())
-    dfrob2 = np.linalg.norm(Theta2 - r2, 'fro')
-    # Weighted average
-    auc = auc1 * (1-mix_prop) + auc2 * mix_prop
-    f1 = f1_1 * (1-mix_prop) + f1_2 * mix_prop
-    dcor = dcor1 * (1-mix_prop) + dcor2 * mix_prop
-    dfrob = dfrob1 * (1-mix_prop) + dfrob2 * mix_prop
+    assert len(mix_props) == len(Thetas)
+    
+    ns = [int(round(n * p)) for p in mix_props]
+    ns[-1] = n - sum(ns[:-1])
+
+    aucs, f1s, dcors, dfrobs = [], [], [], []
+    start = 0
+    for n_sub, Theta in zip(ns, Thetas):
+        end = start + n_sub
+        expr_sub = X1[start:end]
+        meth_sub = X2[start:end]
+        combined = np.append(expr_sub, meth_sub, axis=1)
+        gl = GraphicalLassoCV(assume_centered=False)
+        gl.fit(combined)
+        r = gl.precision_
+        y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
+        y_score = np.abs(r).flatten()
+        aucs.append(roc_auc_score(y_true, y_score))
+        f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
+        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        start = end
+
+    auc = sum(a * p for a, p in zip(aucs, mix_props))
+    f1 = sum(f * p for f, p in zip(f1s, mix_props))
+    dcor = sum(d * p for d, p in zip(dcors, mix_props))
+    dfrob = sum(d * p for d, p in zip(dfrobs, mix_props))
     return auc, f1, dcor, dfrob
