@@ -422,7 +422,47 @@ def simulate_siren_data_removeOnly(eta11, eta12, eta22, p1, p2, epsilon, n, mix_
 
     return (X11, X12, X21, X22, Theta1, Theta2, Sigma1, Sigma2)
 
-def simulate_siren_data(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
+
+def simulate_homogeneous_data(eta11, eta12, eta22, p1, p2, epsilon, n, seed):
+    np.random.seed(seed)
+    Theta = np.identity(p1+p2)
+    n11 = int(np.around(p1*(p1-1)/2*eta11))
+    n12 = int(np.around(p1*p2*eta12))
+    n22 = int(np.around(p2*(p2-1)/2*eta22))
+    print("n11="+str(n11)+", n12="+str(n12)+", n22="+str(n22))
+    IDs = np.cumsum([0,p1,p2])
+    n11_IDs = np.random.choice(range(int(p1*(p1-1)/2)), size=n11, replace=False)
+    n12_IDs = np.random.choice(range(int(p1*p2)), size=n12, replace=False)
+    n22_IDs = np.random.choice(range(int(p2*(p2-1)/2)), size=n22, replace=False)
+    Theta11 = Theta[IDs[0]:IDs[1],IDs[0]:IDs[1]]
+    Theta12 = Theta[IDs[0]:IDs[1],IDs[1]:IDs[2]]
+    Theta22 = Theta[IDs[1]:IDs[2],IDs[1]:IDs[2]]
+    Theta11_vec = Theta11[np.triu_indices(p1,1)]
+    Theta12_vec = Theta12.flatten()
+    Theta22_vec = Theta22[np.triu_indices(p2,1)]
+    Theta11_vec[n11_IDs] = np.random.uniform(-1.,1.,size=len(n11_IDs))
+    Theta12_vec[n12_IDs] = np.random.uniform(-1.,1.,size=len(n12_IDs))
+    Theta22_vec[n22_IDs] = np.random.uniform(-1.,1.,size=len(n22_IDs))
+    Theta11[np.triu_indices(p1,1)] = Theta11_vec
+    Theta22[np.triu_indices(p2,1)] = Theta22_vec
+    Theta[IDs[0]:IDs[1],IDs[1]:IDs[2]] = Theta12_vec.reshape((p1,p2))
+    Theta[IDs[0]:IDs[1],IDs[0]:IDs[1]] = Theta11
+    Theta[IDs[1]:IDs[2],IDs[1]:IDs[2]] = Theta22
+    Theta = Theta + Theta.T - np.identity(p1+p2)
+    Theta = Theta - np.identity(p1+p2) + np.diag(np.sum(abs(Theta), axis=0)+ 0.0001)
+    A = np.zeros((p1+p2,p1+p2)) + np.sqrt(np.diag(Theta))
+    Theta = Theta/A/A.T
+    Sigma = np.linalg.inv(Theta)
+    mu = np.zeros(p1+p2)
+    X = np.random.multivariate_normal(mean=mu, cov=Sigma, size=n)
+    noise1 = np.random.normal(0, epsilon[0], (n,p1))
+    noise2 = np.random.normal(0, epsilon[1], (n,p2))
+    X1 = X[:,IDs[0]:IDs[1]] + noise1
+    X2 = X[:,IDs[1]:IDs[2]] + noise2
+    return(X1, X2, Theta, Sigma)
+
+
+def simulate_heterogeneous_data(eta11, eta12, eta22, p1, p2, epsilon, n, mix_prop, seed):
     np.random.seed(seed)
     Theta = np.identity(p1 + p2)
     n11 = int(np.around(p1 * (p1 - 1) / 2 * eta11))
