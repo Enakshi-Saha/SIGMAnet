@@ -604,30 +604,42 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
     # Theta1 is the base
     Theta1, IDs = make_theta(eta11, eta12, eta22, p1, p2)
 
-    # Theta2: remove 10% nonzero edges from Theta1
+    ### Generate Theta2 and Theta3 as a chain of perturbations from Theta1
+    # Theta2: remove 10% of nonzero off-diagonal entries and double another 10% from Theta1
+    # Theta3: remove 10% of nonzero off-diagonal entries and double another 10% from Theta2
+    # This creates a gradient of increasing dissimilarity: Theta1 -> Theta2 -> Theta3
     def perturb_theta(Theta_base, seed_offset):
-        np.random.seed(seed + seed_offset)
-        Theta2 = Theta_base.copy()
-        off_diag_indices = np.triu_indices_from(Theta2, k=1)
-        zero_indices = np.where(Theta2[off_diag_indices] == 0)[0]
-        nonzero_indices = np.where(Theta2[off_diag_indices] != 0)[0]
-        n_flip_zero = max(1, int(0.1 * len(zero_indices)))
-        n_flip_nonzero = max(1, int(0.1 * len(nonzero_indices)))
-        add_indices = np.random.choice(zero_indices, size=n_flip_zero, replace=False)
-        remove_indices = np.random.choice(nonzero_indices, size=n_flip_nonzero, replace=False)
-        i_add = off_diag_indices[0][add_indices]
-        j_add = off_diag_indices[1][add_indices]
-        Theta2[i_add, j_add] = np.random.uniform(-1, 1, size=n_flip_zero)
-        Theta2[j_add, i_add] = Theta2[i_add, j_add]
+        rng = np.random.RandomState(seed + seed_offset)
+        Theta_new = Theta_base.copy()
+        off_diag_indices = np.triu_indices_from(Theta_new, k=1)
+        nonzero_indices = np.where(Theta_new[off_diag_indices] != 0)[0]
+        
+        n_remove = max(1, int(0.1 * len(nonzero_indices)))
+        n_double = max(1, int(0.1 * len(nonzero_indices)))
+        
+        # Sample distinct indices for removing and doubling
+        chosen = rng.choice(nonzero_indices, size=n_remove + n_double, replace=False)
+        remove_indices = chosen[:n_remove]
+        double_indices = chosen[n_remove:]
+        
+        # Remove edges
         i_remove = off_diag_indices[0][remove_indices]
         j_remove = off_diag_indices[1][remove_indices]
-        Theta2[i_remove, j_remove] = 0.
-        Theta2[j_remove, i_remove] = 0.
-        Theta2 += np.diag(np.maximum(0.0001, np.sum(np.abs(Theta2), axis=0)))
-        return Theta2
+        Theta_new[i_remove, j_remove] = 0.
+        Theta_new[j_remove, i_remove] = 0.
+        
+        # Double edges
+        i_double = off_diag_indices[0][double_indices]
+        j_double = off_diag_indices[1][double_indices]
+        Theta_new[i_double, j_double] *= 2
+        Theta_new[j_double, i_double] *= 2
+        
+        # Ensure positive definite
+        Theta_new += np.diag(np.maximum(0.0001, np.sum(np.abs(Theta_new), axis=0)))
+        return Theta_new
 
     Theta2 = perturb_theta(Theta1, seed_offset=1)
-    Theta3 = perturb_theta(Theta1, seed_offset=2)  # independently perturbed from Theta1
+    Theta3 = perturb_theta(Theta2, seed_offset=2)  # chained from Theta2
 
     Sigma1 = np.linalg.inv(Theta1)
     Sigma2 = np.linalg.inv(Theta2)
