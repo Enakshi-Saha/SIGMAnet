@@ -962,3 +962,13 @@ def evaluate_GL_mixture_knownGroup(X1, X2, mix_props, Thetas):
     dcor = sum(d * p for d, p in zip(dcors, mix_props))
     dfrob = sum(d * p for d, p in zip(dfrobs, mix_props))
     return auc, f1, dcor, dfrob
+
+
+def precision_to_partial_correlation(Theta):
+    p = Theta.shape[0]
+    A = np.sqrt(np.zeros((p, p)) + np.diag(Theta))
+    r = -Theta / A / A.T
+    r = r - np.diag(np.diag(r))
+    return r
+
+
