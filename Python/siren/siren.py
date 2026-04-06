@@ -160,8 +160,9 @@ class Siren():
         self.covariance_matrix = covariance_matrix
 
         # Estimate OAS precision matrix
-        oas = OAS(store_precision=False, assume_centered=False)
+        oas = OAS(store_precision=True, assume_centered=False)
         oas.fit(fulldata.T)
+        pop_precision = oas.precision_
         
         # Custom shrinkage parameter for individual-specific precision
         l = oas.shrinkage_
@@ -174,9 +175,9 @@ class Siren():
         # pop_precision = np.linalg.inv(Sigma)
 
         # Shrink using ShrunkCovariance with custom lambda
-        shrunk_cov = ShrunkCovariance(shrinkage=l, store_precision=True, assume_centered=False)
-        shrunk_cov.fit(fulldata.T)
-        pop_precision = shrunk_cov.precision_
+        # shrunk_cov = ShrunkCovariance(shrinkage=l, store_precision=True, assume_centered=False)
+        # shrunk_cov.fit(fulldata.T)
+        # pop_precision = shrunk_cov.precision_
 
         print('siren: We are starting to compute the networks...')
         if sample_names == []:
