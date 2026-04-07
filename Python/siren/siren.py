@@ -606,44 +606,40 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
     # Theta2: remove 10% and double 10% of nonzero off-diagonal entries from Theta1
     # Theta3: remove 10% and triple 10% of nonzero off-diagonal entries from Theta1
     # Different seeds and multipliers ensure distinct populations
-    def perturb_theta(Theta_base, seed_offset, multiplier = 2, change_prop = 0.1):
+    def perturb_theta(Theta_base, seed_offset, change_prop=0.1):
         rng = np.random.RandomState(seed + seed_offset)
         Theta_new = Theta_base.copy()
         off_diag_indices = np.triu_indices_from(Theta_new, k=1)
+        zero_indices = np.where(Theta_new[off_diag_indices] == 0)[0]
         nonzero_indices = np.where(Theta_new[off_diag_indices] != 0)[0]
         
-        n_remove = max(1, int(change_prop * len(nonzero_indices)))
-        n_double = max(1, int(change_prop * len(nonzero_indices)))
+        n_change = max(1, int(change_prop * len(nonzero_indices)))
         
-        # Sample distinct indices for removing and doubling
-        chosen = rng.choice(nonzero_indices, size=n_remove + n_double, replace=False)
-        remove_indices = chosen[:n_remove]
-        double_indices = chosen[n_remove:]
-        
-        # Remove edges
+        # Add new edges (zero → nonzero)
+        add_indices = rng.choice(zero_indices, size=n_change, replace=False)
+        i_add = off_diag_indices[0][add_indices]
+        j_add = off_diag_indices[1][add_indices]
+        new_values = rng.uniform(-1, 1, size=n_change)
+        Theta_new[i_add, j_add] = new_values
+        Theta_new[j_add, i_add] = new_values
+    
+        # Remove existing edges (nonzero → zero)
+        remove_indices = rng.choice(nonzero_indices, size=n_change, replace=False)
         i_remove = off_diag_indices[0][remove_indices]
         j_remove = off_diag_indices[1][remove_indices]
         Theta_new[i_remove, j_remove] = 0.
         Theta_new[j_remove, i_remove] = 0.
-        
-        # Double edges
-        i_double = off_diag_indices[0][double_indices]
-        j_double = off_diag_indices[1][double_indices]
-        Theta_new[i_double, j_double] *= multiplier
-        Theta_new[j_double, i_double] *= multiplier
-        
-        # Ensure positive definite
+    
+        # Ensure positive definite and normalize
         Theta_new += np.diag(np.maximum(0.0001, np.sum(np.abs(Theta_new), axis=0)))
-        
-        # Normalize diagonal to 1
         A = np.zeros((Theta_new.shape[0], Theta_new.shape[0])) + np.sqrt(np.diag(Theta_new))
         Theta_new = Theta_new / A / A.T
         
         return Theta_new
-
-    Theta2 = perturb_theta(Theta1, seed_offset=1, multiplier = 2, change_prop = 0.1)
-    Theta3 = perturb_theta(Theta1, seed_offset=10, multiplier = 4, change_prop = 0.2) 
-
+    
+    Theta2 = perturb_theta(Theta1, seed_offset=1, change_prop=0.1)
+    Theta3 = perturb_theta(Theta1, seed_offset=10, change_prop=0.1)
+    
     Sigma1 = np.linalg.inv(Theta1)
     Sigma2 = np.linalg.inv(Theta2)
     Sigma3 = np.linalg.inv(Theta3)
