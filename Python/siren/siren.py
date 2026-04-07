@@ -505,38 +505,29 @@ def simulate_heterogeneous_data_2pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
     # Copy the original matrix
     Theta2 = Theta1.copy()
 
-    # Get off-diagonal upper triangle indices
+    # Perturbation
     off_diag_indices = np.triu_indices_from(Theta2, k=1)
-
-    # Identify zero and nonzero positions in upper triangle
     zero_indices = np.where(Theta2[off_diag_indices] == 0)[0]
     nonzero_indices = np.where(Theta2[off_diag_indices] != 0)[0]
-
-    # Determine number of entries to modify
     n_flip_zero = max(1, int(0.1 * len(zero_indices)))
     n_flip_nonzero = max(1, int(0.1 * len(nonzero_indices)))
-
-    # Sample indices to modify
     add_indices = np.random.choice(zero_indices, size=n_flip_zero, replace=False)
     remove_indices = np.random.choice(nonzero_indices, size=n_flip_nonzero, replace=False)
-
-    # Make zero → nonzero (assign random value in [-1, 1])
     i_add = off_diag_indices[0][add_indices]
     j_add = off_diag_indices[1][add_indices]
     new_values = np.random.uniform(-1, 1, size=n_flip_zero)
     Theta2[i_add, j_add] = new_values
-    Theta2[j_add, i_add] = new_values  # maintain symmetry
-
-    # Make nonzero → zero
+    Theta2[j_add, i_add] = new_values
     i_remove = off_diag_indices[0][remove_indices]
     j_remove = off_diag_indices[1][remove_indices]
     Theta2[i_remove, j_remove] = 0.
     Theta2[j_remove, i_remove] = 0.
-
-
-    # Ensure Theta2 is still positive definite
+    
+    # ensure positive definite and normalize
     Theta2 += np.diag(np.maximum(0.0001, np.sum(np.abs(Theta2), axis=0)))
-
+    A2 = np.zeros((p1 + p2, p1 + p2)) + np.sqrt(np.diag(Theta2))
+    Theta2 = Theta2 / A2 / A2.T
+    
     # Get Sigma1 and Sigma2
     Sigma1 = np.linalg.inv(Theta1)
     Sigma2 = np.linalg.inv(Theta2)
