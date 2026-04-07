@@ -643,6 +643,11 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
         
         # Ensure positive definite
         Theta_new += np.diag(np.maximum(0.0001, np.sum(np.abs(Theta_new), axis=0)))
+        
+        # Normalize diagonal to 1
+        A = np.zeros((Theta_new.shape[0], Theta_new.shape[0])) + np.sqrt(np.diag(Theta_new))
+        Theta_new = Theta_new / A / A.T
+        
         return Theta_new
 
     Theta2 = perturb_theta(Theta1, seed_offset=1)
