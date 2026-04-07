@@ -613,18 +613,19 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
         zero_indices = np.where(Theta_new[off_diag_indices] == 0)[0]
         nonzero_indices = np.where(Theta_new[off_diag_indices] != 0)[0]
         
-        n_change = max(1, int(change_prop * len(nonzero_indices)))
+        n_add = max(1, int(change_prop * len(zero_indices)))       # 10% of ZERO entries ← fix
+        n_remove = max(1, int(change_prop * len(nonzero_indices))) # 10% of NONZERO entries
         
         # Add new edges (zero → nonzero)
-        add_indices = rng.choice(zero_indices, size=n_change, replace=False)
+        add_indices = rng.choice(zero_indices, size=n_add, replace=False)
         i_add = off_diag_indices[0][add_indices]
         j_add = off_diag_indices[1][add_indices]
-        new_values = rng.uniform(-1, 1, size=n_change)
+        new_values = rng.uniform(-1, 1, size=n_add)
         Theta_new[i_add, j_add] = new_values
         Theta_new[j_add, i_add] = new_values
     
         # Remove existing edges (nonzero → zero)
-        remove_indices = rng.choice(nonzero_indices, size=n_change, replace=False)
+        remove_indices = rng.choice(nonzero_indices, size=n_remove, replace=False)
         i_remove = off_diag_indices[0][remove_indices]
         j_remove = off_diag_indices[1][remove_indices]
         Theta_new[i_remove, j_remove] = 0.
