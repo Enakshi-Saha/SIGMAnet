@@ -602,11 +602,11 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
     # Theta1 is the base
     Theta1, IDs = make_theta(eta11, eta12, eta22, p1, p2)
 
-    ### Generate Theta2 and Theta3 as a chain of perturbations from Theta1
-    # Theta2: remove 10% of nonzero off-diagonal entries and double another 10% from Theta1
-    # Theta3: remove 10% of nonzero off-diagonal entries and double another 10% from Theta2
-    # This creates a gradient of increasing dissimilarity: Theta1 -> Theta2 -> Theta3
-    def perturb_theta(Theta_base, seed_offset):
+    ### Generate Theta2 and Theta3 as independent perturbations from Theta1
+    # Theta2: remove 10% and double 10% of nonzero off-diagonal entries from Theta1
+    # Theta3: remove 10% and triple 10% of nonzero off-diagonal entries from Theta1
+    # Different seeds and multipliers ensure distinct populations
+    def perturb_theta(Theta_base, seed_offset, multiplier = 2):
         rng = np.random.RandomState(seed + seed_offset)
         Theta_new = Theta_base.copy()
         off_diag_indices = np.triu_indices_from(Theta_new, k=1)
@@ -629,8 +629,8 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
         # Double edges
         i_double = off_diag_indices[0][double_indices]
         j_double = off_diag_indices[1][double_indices]
-        Theta_new[i_double, j_double] *= 2
-        Theta_new[j_double, i_double] *= 2
+        Theta_new[i_double, j_double] *= multiplier
+        Theta_new[j_double, i_double] *= multiplier
         
         # Ensure positive definite
         Theta_new += np.diag(np.maximum(0.0001, np.sum(np.abs(Theta_new), axis=0)))
@@ -641,8 +641,8 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
         
         return Theta_new
 
-    Theta2 = perturb_theta(Theta1, seed_offset=1)
-    Theta3 = perturb_theta(Theta2, seed_offset=2)  # chained from Theta2
+    Theta2 = perturb_theta(Theta1, seed_offset=1, multiplier = 2)
+    Theta3 = perturb_theta(Theta1, seed_offset=10, multiplier = 3) 
 
     Sigma1 = np.linalg.inv(Theta1)
     Sigma2 = np.linalg.inv(Theta2)
