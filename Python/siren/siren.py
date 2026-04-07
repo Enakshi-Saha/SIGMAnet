@@ -606,15 +606,15 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
     # Theta2: remove 10% and double 10% of nonzero off-diagonal entries from Theta1
     # Theta3: remove 10% and triple 10% of nonzero off-diagonal entries from Theta1
     # Different seeds and multipliers ensure distinct populations
-    def perturb_theta(Theta_base, seed_offset, change_prop=0.1):
+    def perturb_theta(Theta_base, seed_offset, change_prop=0.05):
         rng = np.random.RandomState(seed + seed_offset)
         Theta_new = Theta_base.copy()
         off_diag_indices = np.triu_indices_from(Theta_new, k=1)
         zero_indices = np.where(Theta_new[off_diag_indices] == 0)[0]
         nonzero_indices = np.where(Theta_new[off_diag_indices] != 0)[0]
         
-        n_add = max(1, int(change_prop * len(zero_indices)))       # 10% of ZERO entries ← fix
-        n_remove = max(1, int(change_prop * len(nonzero_indices))) # 10% of NONZERO entries
+        n_add = max(1, int(change_prop * len(zero_indices)))       # 5% of ZERO entries ← fix
+        n_remove = max(1, int(change_prop * len(nonzero_indices))) # 5% of NONZERO entries
         
         # Add new edges (zero → nonzero)
         add_indices = rng.choice(zero_indices, size=n_add, replace=False)
@@ -638,8 +638,8 @@ def simulate_heterogeneous_data_3pop(eta11, eta12, eta22, p1, p2, epsilon, n, mi
         
         return Theta_new
     
-    Theta2 = perturb_theta(Theta1, seed_offset=1, change_prop=0.1)
-    Theta3 = perturb_theta(Theta1, seed_offset=10, change_prop=0.1)
+    Theta2 = perturb_theta(Theta1, seed_offset=1, change_prop=0.05)
+    Theta3 = perturb_theta(Theta1, seed_offset=10, change_prop=0.05)
     
     Sigma1 = np.linalg.inv(Theta1)
     Sigma2 = np.linalg.inv(Theta2)
