@@ -791,16 +791,18 @@ def evaluate_OAS_mixture(X1, X2, mix_props, Thetas):
     oas = OAS(store_precision=True, assume_centered=False)
     oas.fit(combined)
     r = oas.precision_
+    r_pcor = precision_to_partial_correlation(r)  # convert to partial correlation
 
     # Evaluate against each subgroup's Theta separately
     aucs, f1s, dcors, dfrobs = [], [], [], []
     for Theta in Thetas:
+        Theta_pcor = precision_to_partial_correlation(Theta) 
         y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
         y_score = np.abs(r).flatten()
         aucs.append(roc_auc_score(y_true, y_score))
         f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
-        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
-        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        dcors.append(pearsonr(Theta_pcor.flatten(), r_pcor.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta_pcor - r_pcor, 'fro'))
 
     auc = sum(a * p for a, p in zip(aucs, mix_props))
     f1 = sum(f * p for f, p in zip(f1s, mix_props))
@@ -818,16 +820,18 @@ def evaluate_LW_mixture(X1, X2, mix_props, Thetas):
     lw = LedoitWolf(store_precision=True, assume_centered=False)
     lw.fit(combined)
     r = lw.precision_
+    r_pcor = precision_to_partial_correlation(r)  # convert to partial correlation
 
     # Evaluate against each subgroup's Theta separately
     aucs, f1s, dcors, dfrobs = [], [], [], []
     for Theta in Thetas:
+        Theta_pcor = precision_to_partial_correlation(Theta) 
         y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
         y_score = np.abs(r).flatten()
         aucs.append(roc_auc_score(y_true, y_score))
         f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
-        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
-        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        dcors.append(pearsonr(Theta_pcor.flatten(), r_pcor.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta_pcor - r_pcor, 'fro'))
 
     auc = sum(a * p for a, p in zip(aucs, mix_props))
     f1 = sum(f * p for f, p in zip(f1s, mix_props))
@@ -845,16 +849,18 @@ def evaluate_GL_mixture(X1, X2, mix_props, Thetas):
     gl = GraphicalLassoCV(assume_centered=False)
     gl.fit(combined)
     r = gl.precision_
+    r_pcor = precision_to_partial_correlation(r)  # convert to partial correlation
 
     # Evaluate against each subgroup's Theta separately
     aucs, f1s, dcors, dfrobs = [], [], [], []
     for Theta in Thetas:
+        Theta_pcor = precision_to_partial_correlation(Theta) 
         y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
         y_score = np.abs(r).flatten()
         aucs.append(roc_auc_score(y_true, y_score))
         f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
-        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
-        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        dcors.append(pearsonr(Theta_pcor.flatten(), r_pcor.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta_pcor - r_pcor, 'fro'))
 
     auc = sum(a * p for a, p in zip(aucs, mix_props))
     f1 = sum(f * p for f, p in zip(f1s, mix_props))
@@ -878,6 +884,7 @@ def evaluate_OAS_mixture_knownGroup(X1, X2, mix_props, Thetas):
     aucs, f1s, dcors, dfrobs = [], [], [], []
     start = 0
     for i, (n_sub, Theta) in enumerate(zip(ns, Thetas)):
+        Theta_pcor = precision_to_partial_correlation(Theta) 
         end = start + n_sub
         expr_sub = X1[start:end]
         meth_sub = X2[start:end]
@@ -885,12 +892,13 @@ def evaluate_OAS_mixture_knownGroup(X1, X2, mix_props, Thetas):
         oas = OAS(store_precision=True, assume_centered=False)
         oas.fit(combined)
         r = oas.precision_
+        r_pcor = precision_to_partial_correlation(r)  # convert to partial correlation
         y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
         y_score = np.abs(r).flatten()
         aucs.append(roc_auc_score(y_true, y_score))
         f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
-        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
-        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        dcors.append(pearsonr(Theta_pcor.flatten(), r_pcor.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta_pcor - r_pcor, 'fro'))
         start = end
 
     auc = sum(a * p for a, p in zip(aucs, mix_props))
@@ -910,6 +918,7 @@ def evaluate_LW_mixture_knownGroup(X1, X2, mix_props, Thetas):
     aucs, f1s, dcors, dfrobs = [], [], [], []
     start = 0
     for n_sub, Theta in zip(ns, Thetas):
+        Theta_pcor = precision_to_partial_correlation(Theta) 
         end = start + n_sub
         expr_sub = X1[start:end]
         meth_sub = X2[start:end]
@@ -917,12 +926,13 @@ def evaluate_LW_mixture_knownGroup(X1, X2, mix_props, Thetas):
         lw = LedoitWolf(store_precision=True, assume_centered=False)
         lw.fit(combined)
         r = lw.precision_
+        r_pcor = precision_to_partial_correlation(r)  # convert to partial correlation
         y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
         y_score = np.abs(r).flatten()
         aucs.append(roc_auc_score(y_true, y_score))
         f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
-        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
-        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        dcors.append(pearsonr(Theta_pcor.flatten(), r_pcor.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta_pcor - r_pcor, 'fro'))
         start = end
 
     auc = sum(a * p for a, p in zip(aucs, mix_props))
@@ -942,6 +952,7 @@ def evaluate_GL_mixture_knownGroup(X1, X2, mix_props, Thetas):
     aucs, f1s, dcors, dfrobs = [], [], [], []
     start = 0
     for n_sub, Theta in zip(ns, Thetas):
+        Theta_pcor = precision_to_partial_correlation(Theta) 
         end = start + n_sub
         expr_sub = X1[start:end]
         meth_sub = X2[start:end]
@@ -949,12 +960,13 @@ def evaluate_GL_mixture_knownGroup(X1, X2, mix_props, Thetas):
         gl = GraphicalLassoCV(assume_centered=False)
         gl.fit(combined)
         r = gl.precision_
+        r_pcor = precision_to_partial_correlation(r)  # convert to partial correlation
         y_true = ((np.abs(Theta) > 0)).astype(int).flatten()
         y_score = np.abs(r).flatten()
         aucs.append(roc_auc_score(y_true, y_score))
         f1s.append(f1_score(y_true, (y_score > 0).astype(int)))
-        dcors.append(pearsonr(Theta.flatten(), r.flatten())[0])
-        dfrobs.append(np.linalg.norm(Theta - r, 'fro'))
+        dcors.append(pearsonr(Theta_pcor.flatten(), r_pcor.flatten())[0])
+        dfrobs.append(np.linalg.norm(Theta_pcor - r_pcor, 'fro'))
         start = end
 
     auc = sum(a * p for a, p in zip(aucs, mix_props))
