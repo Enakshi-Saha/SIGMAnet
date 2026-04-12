@@ -6,15 +6,16 @@ from .timer import Timer
 import numpy as np
 from netZooPy.panda.panda import Panda
 from netZooPy.panda import calculations as calc
-from netZooPy.ligress import io
+from netZooPy.prism import io
 import sys
 import os
+import glob
 import pandas as pd
 
 
-class Ligress(Panda):
+class Prism(Panda):
     """
-    Learning Individual-specific Gene REgulation through Sample-Specific inference
+    Personalized Regulation Inference via Sample-specific Motifs
         1. Reading in input data (expression, motif prior table, TF PPI data)
         2. Preparing motif prior universe
         3. Estimating sample-specific coexpression with lioness
@@ -87,7 +88,7 @@ class Ligress(Panda):
         mode_priors="union",
         prior_tf_col=0,
         prior_gene_col=1,
-        output_folder='./ligress/'
+        output_folder='./prism/'
     ):
         """Intialize instance of Panda class and load data."""
 
@@ -199,9 +200,9 @@ class Ligress(Panda):
         if self.ppi_mode=='motif':
             self.ppi_data = self.ppi_data.loc[self.universe_tfs,self.universe_tfs]
     
-    def run_ligress(self, keep_coexpression = False,save_memory = False, online_coexpression = False, coexpression_folder = 'coexpression/', computing_lioness = 'cpu', computing_panda = 'cpu', cores = 1, alpha = 0.1 , precision = 'single', th_motifs = 3, tune_delta=False, delta=0.1):
+    def run_prism(self, keep_coexpression = False,save_memory = False, online_coexpression = False, coexpression_folder = 'coexpression/', computing_lioness = 'cpu', computing_panda = 'cpu', cores = 1, alpha = 0.1 , precision = 'single', th_motifs = 3, tune_delta=False, delta=0.1):
         
-        """Ligress algorithm
+        """Prism algorithm
 
         Args:
             keep_coexpression (bool, optional): whether to save each coexpression network
@@ -216,7 +217,7 @@ class Ligress(Panda):
             only once.
         """
 
-        ligress_start = time.time()
+        prism_start = time.time()
         # first let's reorder the expression data
         
         if precision=='single':
@@ -239,7 +240,7 @@ class Ligress(Panda):
         # self.expression_data_scaled = (self.expression_data - self.expression_data.mean(axis = 1))/self.expression_data.std(ddof=1, axis = 1)
     
         # Center expression data to make mean = 0
-        # let's remove this from here, and keep it only inside the ligress computation
+        # let's remove this from here, and keep it only inside the prism computation
         #self.expression_data_centered = (self.expression_data - np.mean(self.expression_data.values,axis = 1, keepdims=True))
 
         self.expression_mean = np.nanmean(self.expression_data.values,axis = 1, keepdims=True)
@@ -254,7 +255,7 @@ class Ligress(Panda):
                     sample_start = time.time()
                     ppi_data = self._get_ppi(sample, missing_tf = tftoadd)
                     # first run lioness on coexpression
-                    self._ligress_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder, delta = delta, tune_delta=tune_delta)
+                    self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder, delta = delta, tune_delta=tune_delta)
 
         else:
             # Now for each sample we compute the lioness network from correlations and 
@@ -264,11 +265,11 @@ class Ligress(Panda):
                 # first run lioness on coexpression
                 motif_data, tftoadd, genetoadd = self._get_motif(self.sample2prior_dict[sample])
                 ppi_data = self._get_ppi(sample, missing_tf = tftoadd)
-                self._ligress_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder, delta = delta, tune_delta=tune_delta)
+                self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder, delta = delta, tune_delta=tune_delta)
 
 
-    def _ligress_loop(self, ppi_data, motif_data, sample, keep_coexpression = False, save_memory = True, online_coexpression = False, computing_lioness = 'cpu', coexpression_folder = './coexpression/' , computing_panda = 'cpu', alpha = 0.1, delta=0.3,tune_delta=False):
-        """Runs ligress on one sample. For now all samples are saved separately.
+    def _prism_loop(self, ppi_data, motif_data, sample, keep_coexpression = False, save_memory = True, online_coexpression = False, computing_lioness = 'cpu', coexpression_folder = './coexpression/' , computing_panda = 'cpu', alpha = 0.1, delta=0.3,tune_delta=False):
+        """Runs prism on one sample. For now all samples are saved separately.
 
         Args:
             correlation_complete (_type_): _description_
@@ -442,7 +443,7 @@ class Ligress(Panda):
 ### SIMULATION #########
 ########################
 
-def simulate_ligress_data(
+def simulate_prism_data(
     n_genes=50,
     n_tfs=10,
     n_samples=10,
@@ -455,10 +456,10 @@ def simulate_ligress_data(
     seed=42,
     output_folder='sim_data/',
 ):
-    """Simulate synthetic data for Ligress benchmarking.
+    """Simulate synthetic data for Prism benchmarking.
 
     Generates gene expression, motif priors, PPI, and a priors table
-    compatible with the Ligress input format. Samples are split across
+    compatible with the Prism input format. Samples are split across
     groups according to group_proportions, or evenly if not specified.
 
     Parameters
@@ -623,17 +624,17 @@ def evaluate_networks(
     sample2group,
     group_motifs,
 ):
-    """Evaluate Ligress output networks against known ground-truth motifs.
+    """Evaluate Prism output networks against known ground-truth motifs.
 
     Generalizes evaluation to any number of groups/motifs by using a
-    sample2group mapping (mirrors the sample2prior_dict logic in Ligress).
+    sample2group mapping (mirrors the sample2prior_dict logic in Prism).
     Handles genes absent from the PANDA output (e.g., genes not regulated
     by any TF in the motif) by filling missing entries with 0.
 
     Parameters
     ----------
     output_folder : str
-        Path to the Ligress output folder (expects single_panda/ subfolder).
+        Path to the Prism output folder (expects single_panda/ subfolder).
     tfs : list of str
         Ordered list of TF names used in the simulation.
     genes : list of str
