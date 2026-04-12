@@ -6,7 +6,7 @@ from .timer import Timer
 import numpy as np
 from netZooPy.panda.panda import Panda
 from netZooPy.panda import calculations as calc
-from netZooPy.prism import io
+from . import io
 import sys
 import os
 import glob
