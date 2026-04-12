@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='siren',
+    name='SIGMAnet',
     version='0.1.0',
     author='Enakshi Saha',
     packages=find_packages(),
