@@ -57,7 +57,7 @@ class Siren():
     def __init__(
             self,
             expression_file,
-            methylation_file
+            methylation_file = None
     ):
         """Intialize instance of siren class and load data."""
 
@@ -87,22 +87,25 @@ class Siren():
     ########################
     def _prepare_data(self):
         with Timer("Reading expression data..."):
-            # Read expression
             self.expression_data, self.expression_genes = io.prepare_data(
                 self.expression_file, samples=self.samples
             )
-
-        with Timer("Reading methylation data..."):
-            # Read expression
-            self.methylation_data, self.methylation_probes = io.prepare_data(
-                self.methylation_file, samples=self.samples
-            )
-
-            self.expression_samples = self.expression_data.columns.tolist()
-            self.methylation_samples = self.methylation_data.columns.tolist()
-
-            self.expression_data = self.expression_data.T
-            self.methylation_data = self.methylation_data.T
+    
+        self.expression_samples = self.expression_data.columns.tolist()
+        self.expression_data = self.expression_data.T
+    
+        if self.methylation_file is not None:
+            with Timer("Reading methylation data..."):
+                self.methylation_data, self.methylation_probes = io.prepare_data(
+                    self.methylation_file, samples=self.samples
+                )
+                self.methylation_samples = self.methylation_data.columns.tolist()
+                self.methylation_data = self.methylation_data.T
+        else:
+            # Use empty DataFrame — fulldata will just be expression
+            self.methylation_data = pd.DataFrame(index=self.expression_data.index)
+            self.methylation_probes = set()
+            self.methylation_samples = self.expression_samples
 
     def run_siren(self, keep_in_memory=False, output_fmt=".hdf", output_folder='./siren_output/',
                    delta=None, precision='single', sample_names=[]):
@@ -252,7 +255,10 @@ class Siren():
         ssdragon = -ssprecision / A / A.T
         ssdragon = ssdragon - np.diag(np.diag(ssdragon))
 
-        labels = list(self.expression_data.columns) + list(self.methylation_data.columns)
+        #labels = list(self.expression_data.columns) + list(self.methylation_data.columns)
+        labels = list(self.expression_data.columns)
+        if self.methylation_file is not None:
+            labels += list(self.methylation_data.columns)
         ssdragon = pd.DataFrame(ssdragon, index = labels, columns = labels)
 
         # Compute p-value
