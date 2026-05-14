@@ -1,5 +1,5 @@
 # SIGMAnet
-Sample-specific Individualized Graphical Models for Association Networks.
+Sample-specific and Integrated Graphical Models for Association Networks.
 
 At current stage three methods are hosted:
 
