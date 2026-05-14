@@ -1,4 +1,4 @@
-![SIGMAnet logo](docs/sigmanet_logo.png)
+![SIGMAnet logo](docs/logo.png)
 # SIGMAnet
 Sample-specific and Integrated Graphical Models for Association Networks.
 
