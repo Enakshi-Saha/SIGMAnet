@@ -1,7 +1,8 @@
-<img src="docs/logo.png" alt="SIGMAnet logo" width="600"/>
+<<p align="center">
+  <img src="docs/logo.png" alt="SIGMAnet logo" width="600"/>
+</p>
 
-# SIGMAnet
-Sample-specific and Integrated Graphical Models for Association Networks.
+# SIGMAnet: Sample-specific and Integrated Graphical Models for Association Networks.
 
 At current stage three methods are hosted:
 
