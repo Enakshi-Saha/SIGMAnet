@@ -1,4 +1,5 @@
-![SIGMAnet logo](docs/logo.png)
+<img src="docs/logo.png" alt="SIGMAnet logo" width="600"/>
+
 # SIGMAnet
 Sample-specific and Integrated Graphical Models for Association Networks.
 
