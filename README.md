@@ -1,14 +1,54 @@
-<<p align="center">
+<p align="center">
   <img src="docs/logo.png" alt="SIGMAnet logo" width="600"/>
 </p>
 
-# SIGMAnet: Sample-specific and Integrated Graphical Models for Association Networks.
+# SIGMAnet: Sample-specific and Integrated Graphical Models for Association Networks
 
-At current stage three methods are hosted:
+SIGMAnet is a Python package for estimating individual-specific 
+molecular networks from omics data. The current release includes 
+**SIREN** (Sample-specific Inference via Regularized 
+Empirical-Bayes Networks), a method for estimating 
+individual-specific partial correlation networks from 
+high-dimensional multi-omics data.
 
-- **Sample-specific correlation** (improves BONOBO wth full empirical Bayes formulation and missing data handling capability to enable single-cell data). The name is "ECLIPSE: Empirical Bayes Covariance Learning with Imputation for Personalized Statistical Estimation". Imputation because we impute corrletaion value with the prior correlation if individual (cell-level) data is missing.
-- **Sample-specific GRN** PRISM — Personalized Regulation Inference via Sample-specific Motifs
-- **Sample-specific factor analysis** (X = WB + Error, where Cov(X) is sample-specific and estimated using the above method, then a factorization is done from the marginal model Cov(X) = W*W + I)
-- **Sample-specific Gaussian Graphical Model** (uses OAS by Chen, 2010 to estimate a prior penalized covariance matrix and uses this to estimate posterior inverse Wishart GGM, using Sherman Morrison for scalability. The name is SIREN: Sample-specific Inference via Regularized Empirical-bayes Networks.
+## Installation
 
-SIGMAnet include two plotting functions for unipartite and bipartite networks respectively.
+```bash
+git clone https://github.com/Enakshi-Saha/SIGMAnet.git
+cd SIGMAnet
+pip install -e Python/
+```
+
+## Quick Start
+
+```python
+from siren.siren import Siren
+
+# Single omics
+siren_obj = Siren(data)
+
+# Two omics (expression + methylation)
+siren_obj = Siren(expression_file, methylation_file)
+
+# Run SIREN
+siren_obj.run_siren(keep_in_memory=False, 
+                    output_fmt='.h5',
+                    output_folder='./siren_output/')
+```
+
+## Reference
+
+Saha, E. (2026). Individual-Specific Gaussian Graphical Models 
+for Heterogeneous Populations with Application to Epigenetic 
+Gene Regulation in Lung Adenocarcinoma. *arxiv*.
+
+<!--
+Future methods planned for SIGMAnet:
+- ECLIPSE: Empirical Bayes Covariance Learning with Imputation 
+  for Personalized Statistical Estimation (sample-specific 
+  correlation with missing data handling for single-cell data)
+- PRISM: Personalized Regulation Inference via Sample-specific 
+  Motifs (sample-specific GRN)
+- Sample-specific factor analysis (X = WB + Error, where 
+  Cov(X) is sample-specific)
+-->
