@@ -40,7 +40,7 @@ siren_obj.run_siren(keep_in_memory=False,
 
 Saha, E. (2026). Individual-Specific Gaussian Graphical Models 
 for Heterogeneous Populations with Application to Epigenetic 
-Gene Regulation in Lung Adenocarcinoma. *arxiv*.
+Gene Regulation in Lung Adenocarcinoma. *bioRxiv, pp.2026-05*.
 
 <!--
 Future methods planned for SIGMAnet:
