@@ -72,8 +72,7 @@ def compute_sample_coexpression(sample, expression_data, expression_mean,
     """Compute the sample-specific coexpression matrix for one sample.
 
     This is the single shared implementation used by Prism.compute(), so
-    any future correction (e.g. missing-data handling) only needs to be
-    made here.
+    any future correction only needs to be made here.
 
     Parameters
     ----------
@@ -97,10 +96,31 @@ def compute_sample_coexpression(sample, expression_data, expression_mean,
     names = expression_data.index.tolist()
     touse = [s for s in expression_data.columns if s != sample]
 
-    centered_sample = (expression_data - expression_mean).loc[:, sample]
+    # Zero-fill missing entries before the outer product. A NaN here would
+    # otherwise propagate through np.linalg.inv and corrupt the ENTIRE
+    # coexpression matrix. The zero-filled placeholder is discarded below
+    # for any gene pair touching an unobserved gene, so its exact value
+    # doesn't matter.
+    centered_sample = (expression_data - expression_mean).loc[:, sample].fillna(0)
 
     sscov = delta * np.outer(centered_sample, centered_sample) + (1 - delta) * covariance_matrix
     sscov = np.array(sscov)
+
+    n_loo = get_n_matrix(expression_data.loc[:, touse])
+    nmatrix = n_matrix_full - n_loo
+    # nmatrix is 0/1: removing a single sample changes a pairwise minimum
+    # count by at most 1, so this difference is always binary despite
+    # being built from counts. It marks, for each gene pair, whether this
+    # sample's own data contributed to that pair's observed count.
+    observed_mask = nmatrix.astype(bool)
+
+    # Missing-data fallback (Section 2.5 / eq. 2.14 of the paper), applied
+    # at the covariance level before standardization: any entry touching
+    # an unobserved gene falls back exactly to the prior covariance
+    # V^(jk), rather than the shrunk (delta-weighted) value computed
+    # above. This also gives unobserved genes the correct prior variance
+    # on the diagonal, rather than a (1-delta)-shrunk version of it.
+    sscov = np.where(observed_mask, sscov, covariance_matrix)
 
     diag = np.sqrt(np.diag(np.diag(sscov)))
     diag = np.array(diag)
@@ -110,17 +130,7 @@ def compute_sample_coexpression(sample, expression_data, expression_mean,
     sds = np.linalg.inv(diag)
     coexpression = sds @ sscov @ sds
 
-    n_loo = get_n_matrix(expression_data.loc[:, touse])
-    nmatrix = n_matrix_full - n_loo
-
-    coexpression = pd.DataFrame(
-        data=np.multiply(nmatrix, coexpression), index=names, columns=names
-    )
-    # NOTE: missing-data fallback (Section 2.5 of the paper) not yet applied
-    # here. Currently unobserved gene-pairs are zeroed out via nmatrix;
-    # per the derivation, they should instead fall back to the prior
-    # correlation. TODO: fix in this function only -- Prism.compute()
-    # and PrismGRN both inherit the fix automatically once applied here.
+    coexpression = pd.DataFrame(data=coexpression, index=names, columns=names)
     return coexpression
 
 
