@@ -207,38 +207,38 @@ class Prism:
 
 
 class PrismMultiomic(Prism):
-    """Prism with a nonparanormal (Gaussian copula) transform applied to
-    the expression data before coexpression estimation.
-
-    Intended for non-Gaussian omics modalities (e.g. methylation,
-    proteomics, CNV segment means). Reuses Prism.compute() unchanged --
-    only data preparation differs, via rank-based marginal Gaussianization
-    (Liu et al. 2009) applied prior to delta calibration and covariance
-    estimation.
+    """Prism for non-Gaussian omics modalities: applies a marginal
+    Gaussianizing (nonparanormal) transform to each gene before covariance
+    estimation (Liu et al. 2009). Because the transformed data z is used
+    directly for both V and the individual-sample term (via
+    Prism.compute(), unchanged), covariance estimates are guaranteed
+    positive semi-definite by construction, with no correction step
+    needed.
 
     Authors: Enakshi Saha
     """
 
-    def __init__(self, expression_file, delta=0.1, tune_delta=True, precision='single'):
+    def __init__(self, expression_file, delta=0.1, tune_delta=True,
+                 precision='single'):
         raw = self._load(expression_file, precision)
-        transformed = self._nonparanormal_transform(raw)
-        super().__init__(transformed, delta=delta, tune_delta=tune_delta, precision=precision)
+        z = self._nonparanormal_transform(raw)
+        super().__init__(z, delta=delta, tune_delta=tune_delta, precision=precision)
 
     def _nonparanormal_transform(self, expression_data):
-        """Rank-based Gaussianization and Spearman/Kendall-to-Pearson
-        correlation conversion (Liu et al. 2009).
-
-        TODO: implement. Should compute the correlation matrix via
-        Spearman's rho or Kendall's tau on the raw data (invariant to
-        monotone marginal transforms), convert to the implied Pearson
-        correlation via r = 2*sin(pi/6 * rho) or r = sin(pi/2 * tau),
-        and return data/statistics consistent with what Prism.__init__
-        expects downstream.
+        """Marginal Gaussianization via empirical quantile transform,
+        applied gene-by-gene. NaNs are disregarded in fitting and
+        preserved in the output, so downstream missing-data handling in
+        compute_sample_coexpression applies unchanged.
         """
-        raise NotImplementedError(
-            "Nonparanormal transform not yet implemented."
-        )
+        from sklearn.preprocessing import QuantileTransformer
 
+        qt = QuantileTransformer(output_distribution='normal',
+                                  n_quantiles=min(1000, expression_data.shape[1]))
+        z = pd.DataFrame(
+            qt.fit_transform(expression_data.T.values).T,
+            index=expression_data.index, columns=expression_data.columns
+        )
+        return z
 
 class PrismGRN:
     """Downstream use case: PRISM coexpression estimation + PANDA GRN
