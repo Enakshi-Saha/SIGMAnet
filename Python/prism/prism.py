@@ -13,18 +13,234 @@ import glob
 import pandas as pd
 
 
-class Prism(Panda):
+def get_n_matrix(df):
+    """Pairwise sample-count matrix accounting for missing values.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        genes x samples, may contain NaNs.
+
+    Returns
+    -------
+    np.ndarray, shape (g, g)
     """
-    Personalized Regulation Inference via Sample-specific Motifs
+    N = len(df.columns)
+    nn = N - df.isna().sum(axis=1).values[:, np.newaxis]
+    nr = np.repeat(nn, len(nn), axis=1)
+    return np.minimum(nr, nr.T)
+
+
+def estimate_delta_jackknife(expression_data):
+    """Closed-form jackknife estimate of delta.
+
+    Parameters
+    ----------
+    expression_data : pandas.DataFrame or np.ndarray, shape (g, n)
+        Genes (rows) x samples (columns).
+
+    Returns
+    -------
+    float
+        Estimated delta.
+    """
+    X = np.asarray(expression_data, dtype='float64')
+    g, n = X.shape
+
+    s_kk = X.var(axis=1, ddof=1)  # shape (g,)
+
+    s1 = X.sum(axis=1, keepdims=True)
+    s2 = (X ** 2).sum(axis=1, keepdims=True)
+
+    s1_loo = s1 - X
+    s2_loo = s2 - X ** 2
+    mean_loo = s1_loo / (n - 1)
+    var_loo = (s2_loo - (n - 1) * mean_loo ** 2) / (n - 2)
+
+    eta = var_loo.var(axis=1, ddof=1)
+
+    numerator = 2 * np.sum(s_kk ** 2)
+    denominator = np.sum(eta)
+
+    nu = 3 + numerator / denominator
+    delta = 1.0 / nu
+    return delta
+
+
+def compute_sample_coexpression(sample, expression_data, expression_mean,
+                                 covariance_matrix, delta, n_matrix_full):
+    """Compute the sample-specific coexpression matrix for one sample.
+
+    This is the single shared implementation used by Prism.compute(), so
+    any future correction (e.g. missing-data handling) only needs to be
+    made here.
+
+    Parameters
+    ----------
+    sample : str
+        Column name of the sample in expression_data.
+    expression_data : pd.DataFrame
+        genes x samples, may contain NaNs.
+    expression_mean : np.ndarray, shape (g, 1)
+        Grand mean per gene.
+    covariance_matrix : np.ndarray, shape (g, g)
+        Population covariance S.
+    delta : float
+        Shrinkage weight.
+    n_matrix_full : np.ndarray, shape (g, g)
+        Pairwise sample-count matrix for the full dataset.
+
+    Returns
+    -------
+    pd.DataFrame, shape (g, g)
+    """
+    names = expression_data.index.tolist()
+    touse = [s for s in expression_data.columns if s != sample]
+
+    centered_sample = (expression_data - expression_mean).loc[:, sample]
+
+    sscov = delta * np.outer(centered_sample, centered_sample) + (1 - delta) * covariance_matrix
+    sscov = np.array(sscov)
+
+    diag = np.sqrt(np.diag(np.diag(sscov)))
+    diag = np.array(diag)
+    zero_idx = np.where(np.diag(diag) == 0)[0]
+    for i in zero_idx:
+        diag[i, i] = 1
+    sds = np.linalg.inv(diag)
+    coexpression = sds @ sscov @ sds
+
+    n_loo = get_n_matrix(expression_data.loc[:, touse])
+    nmatrix = n_matrix_full - n_loo
+
+    coexpression = pd.DataFrame(
+        data=np.multiply(nmatrix, coexpression), index=names, columns=names
+    )
+    # NOTE: missing-data fallback (Section 2.5 of the paper) not yet applied
+    # here. Currently unobserved gene-pairs are zeroed out via nmatrix;
+    # per the derivation, they should instead fall back to the prior
+    # correlation. TODO: fix in this function only -- Prism.compute()
+    # and PrismGRN both inherit the fix automatically once applied here.
+    return coexpression
+
+
+class Prism:
+    """Core PRISM estimator: expression data -> sample-specific coexpression.
+
+    Handles delta calibration (jackknife-based, by default) and computes
+    one coexpression matrix per sample. This class owns all covariance
+    computation; PrismMultiomic and PrismGRN build on top of it rather
+    than duplicating this logic.
+
+    Parameters
+    ----------
+    expression_file : str or pandas.DataFrame
+        Genes (rows) x samples (columns); path to a tab-separated file
+        (no header) or a DataFrame.
+    delta : float
+        Shrinkage weight in (0, 1]. Ignored if tune_delta=True.
+    tune_delta : bool
+        Calibrate delta from data via the jackknife estimator (default)
+        instead of using the supplied value.
+    precision : {'single', 'double'}
+        Floating point precision for the expression data.
+
+    Authors: Enakshi Saha
+    """
+
+    def __init__(self, expression_file, delta=0.1, tune_delta=True, precision='single'):
+        self.expression_data = self._load(expression_file, precision)
+        self.samples = self.expression_data.columns.tolist()
+        self.genes = self.expression_data.index.tolist()
+
+        self.n_matrix_full = get_n_matrix(self.expression_data)
+        self.expression_mean = np.nanmean(self.expression_data.values, axis=1, keepdims=True)
+        self.covariance_matrix = self.expression_data.T.cov().values
+
+        self.delta = estimate_delta_jackknife(self.expression_data) if tune_delta else delta
+
+    def _load(self, expression_file, precision):
+        atype = 'float32' if precision == 'single' else 'float64'
+        if isinstance(expression_file, pd.DataFrame):
+            return expression_file.astype(atype)
+        data, _ = io.prepare_expression(expression_file)
+        return data.astype(atype)
+
+    def compute(self, keep_output=False, output_folder='./prism_coexpress/'):
+        """Estimate the sample-specific coexpression matrix for every sample.
+
+        Parameters
+        ----------
+        keep_output : bool
+            Save each sample's matrix to output_folder if True.
+        output_folder : str
+
+        Returns
+        -------
+        dict[str, pandas.DataFrame]
+            Sample name -> (genes x genes) coexpression matrix.
+        """
+        if keep_output and not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+
+        results = {}
+        for sample in self.samples:
+            coexp = compute_sample_coexpression(
+                sample, self.expression_data, self.expression_mean,
+                self.covariance_matrix, self.delta, self.n_matrix_full
+            )
+            results[sample] = coexp
+            if keep_output:
+                coexp.to_csv(f'{output_folder}coexpression_{sample}.txt', sep='\t')
+
+        return results
+
+
+class PrismMultiomic(Prism):
+    """Prism with a nonparanormal (Gaussian copula) transform applied to
+    the expression data before coexpression estimation.
+
+    Intended for non-Gaussian omics modalities (e.g. methylation,
+    proteomics, CNV segment means). Reuses Prism.compute() unchanged --
+    only data preparation differs, via rank-based marginal Gaussianization
+    (Liu et al. 2009) applied prior to delta calibration and covariance
+    estimation.
+
+    Authors: Enakshi Saha
+    """
+
+    def __init__(self, expression_file, delta=0.1, tune_delta=True, precision='single'):
+        raw = self._load(expression_file, precision)
+        transformed = self._nonparanormal_transform(raw)
+        super().__init__(transformed, delta=delta, tune_delta=tune_delta, precision=precision)
+
+    def _nonparanormal_transform(self, expression_data):
+        """Rank-based Gaussianization and Spearman/Kendall-to-Pearson
+        correlation conversion (Liu et al. 2009).
+
+        TODO: implement. Should compute the correlation matrix via
+        Spearman's rho or Kendall's tau on the raw data (invariant to
+        monotone marginal transforms), convert to the implied Pearson
+        correlation via r = 2*sin(pi/6 * rho) or r = sin(pi/2 * tau),
+        and return data/statistics consistent with what Prism.__init__
+        expects downstream.
+        """
+        raise NotImplementedError(
+            "Nonparanormal transform not yet implemented."
+        )
+
+
+class PrismGRN:
+    """Downstream use case: PRISM coexpression estimation + PANDA GRN
+    inference, one network per sample using a sample-specific motif prior.
+
         1. Reading in input data (expression, motif prior table, TF PPI data)
         2. Preparing motif prior universe
-        3. Estimating sample-specific coexpression with lioness
-        4. Running PANDA with a different prior for each samples
-    
-    Warning: if you are familiar with the other netzoopy functions, this one is slightly different. 
-    We have separated the reading and preprocessing steps from those for computation in a more 
-    OOP-friendly fashion.
+        3. Estimating sample-specific coexpression with Prism
+        4. Running PANDA with a different prior for each sample
 
+    This class delegates all coexpression computation to an internal
+    Prism instance; it does not implement any covariance math itself.
 
     Parameters
     ----------
@@ -54,14 +270,12 @@ class Prism(Panda):
             tune_delta: boolean
                 if true, the posterior weight (delta) for the estimation of the single sample coexpression is estimated from data
 
-
     Notes
     ------
 
     Toy data:The example gene expression data that we have available here contains gene expression profiles
     for different samples in the columns. Of note, this is just a small subset of a larger gene
     expression dataset. We provided these "toy" data so that the user can test the method.
-
 
     Sample PANDA results:\b
         - TF    Gene    Motif   Force\n
@@ -73,7 +287,7 @@ class Prism(Panda):
 
     References
     ----------
-    .. [1]__ 
+    .. [1]__
 
     Authors: Enakshi Saha
     """
@@ -83,14 +297,14 @@ class Prism(Panda):
         expression_file,
         priors_table_file,
         ppi_table_file=None,
-        ppi_file = None,
+        ppi_file=None,
         mode_process="union",
         mode_priors="union",
         prior_tf_col=0,
         prior_gene_col=1,
         output_folder='./prism/'
     ):
-        """Intialize instance of Panda class and load data."""
+        """Initialize PrismGRN and load motif/PPI/priors data."""
 
         self.expression_file = expression_file
         self.priors_table_file = priors_table_file
@@ -103,9 +317,8 @@ class Prism(Panda):
         self.mode_process = mode_process
         self.mode_priors = mode_priors
         self.prior_tf_col = prior_tf_col
-        self.prior_gene_col=prior_gene_col
+        self.prior_gene_col = prior_gene_col
         self.output_folder = output_folder
-
 
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
@@ -131,13 +344,14 @@ class Prism(Panda):
         self.gene2idx = None
         self.tf2idx = None
 
+        # the Prism instance used for coexpression estimation, built once
+        # self.prepare_data / run() has restricted expression_data to
+        # universe_genes
+        self.prism = None
 
         # prepare all the data
         self._prepare_data()
 
-    ########################
-    ### METHODS ############
-    ########################
     def _prepare_data(self):
 
         # Read the sample-prior table. We need to know what samples we are using
@@ -145,11 +359,11 @@ class Prism(Panda):
             self.samples, self.sample2prior_dict, self.prior2sample_dict = io.read_priors_table(self.priors_table_file)
             self.n_samples = len(self.samples)
 
-            if self.ppi_mode=='sample':
-                self.samples_ppi, self.sample2ppi_dict, self.ppi2sample_dict = io.read_priors_table(self.ppi_table_file, sample_col = 'sample', prior_col = 'prior')
-                #TODO: add check that samples ppi == samples motif
+            if self.ppi_mode == 'sample':
+                self.samples_ppi, self.sample2ppi_dict, self.ppi2sample_dict = io.read_priors_table(self.ppi_table_file, sample_col='sample', prior_col='prior')
+                # TODO: add check that samples ppi == samples motif
 
-            # prepare universe of names in the priors. We won't be reading all of them 
+            # prepare universe of names in the priors. We won't be reading all of them
             # first, because we might want to use too many motif priors
 
             # from motif data
@@ -159,11 +373,11 @@ class Prism(Panda):
             ) = io.read_motif_universe(
                 self.sample2prior_dict, mode=self.mode_priors
             )
-            
-            #from ppi data
+
+            # from ppi data
             # if ppi table file is specified
             with Timer("Loading PPI data ..."):
-                if self.ppi_mode=='sample':
+                if self.ppi_mode == 'sample':
                     (
                         self.ppi_tfs,
                     ) = io.read_ppi_universe(
@@ -174,17 +388,14 @@ class Prism(Panda):
                     # read ppi
                     self.ppi_data, self.ppi_tfs = io.read_ppi(self.ppi_file)
 
-
         with Timer("Reading expression data..."):
             # Read expression
             self.expression_data, self.expression_genes = io.prepare_expression(
                 self.expression_file, samples=self.samples
             )
 
-
-
-        # depending on the strategy for 
-        if self.mode_process=='intersection':
+        # depending on the strategy for
+        if self.mode_process == 'intersection':
             self.universe_genes = sorted(list(set(self.expression_genes).intersection(set(self.priors_genes))))
             self.universe_tfs = sorted(list(set(self.ppi_tfs).intersection(set(self.priors_tfs))))
         else:
@@ -195,292 +406,159 @@ class Prism(Panda):
         self.tf2idx = {x: i for i, x in enumerate(self.universe_tfs)}
 
         # sort the gene expression and ppi data
-        self.expression_data = self.expression_data.loc[self.universe_genes,self.samples]
+        self.expression_data = self.expression_data.loc[self.universe_genes, self.samples]
 
-        if self.ppi_mode=='motif':
-            self.ppi_data = self.ppi_data.loc[self.universe_tfs,self.universe_tfs]
-    
-    def run_prism(self, keep_coexpression = False,save_memory = False, online_coexpression = False, coexpression_folder = 'coexpression/', computing_lioness = 'cpu', computing_panda = 'cpu', cores = 1, alpha = 0.1 , precision = 'single', th_motifs = 3, tune_delta=False, delta=0.1):
-        
-        """Prism algorithm
+        if self.ppi_mode == 'motif':
+            self.ppi_data = self.ppi_data.loc[self.universe_tfs, self.universe_tfs]
+
+    def run(self, keep_coexpression=False, coexpression_folder='coexpression/',
+            computing_panda='cpu', alpha=0.1, precision='single', th_motifs=3,
+            tune_delta=False, delta=0.1):
+
+        """Run PrismGRN: estimate coexpression via Prism, then PANDA per sample.
 
         Args:
             keep_coexpression (bool, optional): whether to save each coexpression network
-            save_memory (bool, optional): whether to save the coexpression with the gene names
-            online_coexpression (bool, optional): if true coexpression is computed with a closed form
             coexpression_folder (str, optional): used if keep_coexpression is passed
-            computing_lioness (str, optional): computing for coexpression lioness. Defaults to 'cpu'.
             computing_panda (str, optional): computing for single sample panda. Defaults to 'cpu'.
-            cores (int, optional): cores. Defaults to 1.
-            alpha (float, optional): _description_. Defaults to 0.1.
+            alpha (float, optional): PANDA's alpha parameter. Defaults to 0.1.
+            precision (str, optional): 'single' or 'double'. Defaults to 'single'.
             th_motifs (int, optional): if the number of motif files is lower than the threshold, each will be loaded
             only once.
+            tune_delta (bool, optional): calibrate delta via jackknife. Defaults to False.
+            delta (float, optional): shrinkage weight, used if tune_delta=False. Defaults to 0.1.
         """
 
         prism_start = time.time()
-        # first let's reorder the expression data
-        
-        if precision=='single':
-            atype = 'float32'
-        elif precision=='double':
-            atype = 'float64'
-        else: 
-            sys.exit('Precision %s unknonw' %str(precision))
-        
-        # let's sort the expression and ppi data
 
-        self.expression_data = self.expression_data.loc[self.universe_genes,:].astype(atype)
-        #correlation_complete = self.expression_data.T.corr()
-        # we automatically multiply the correlation with the number of samples
-        #correlation_complete = correlation_complete * self.get_n_matrix(self.expression_data)
-        self.n_matrix = self.get_n_matrix(self.expression_data)
-        
-        # consider removing this
-        # scale expression data to make mean = 0 and sd = 1
-        # self.expression_data_scaled = (self.expression_data - self.expression_data.mean(axis = 1))/self.expression_data.std(ddof=1, axis = 1)
-    
-        # Center expression data to make mean = 0
-        # let's remove this from here, and keep it only inside the prism computation
-        #self.expression_data_centered = (self.expression_data - np.mean(self.expression_data.values,axis = 1, keepdims=True))
+        if precision not in ('single', 'double'):
+            sys.exit('Precision %s unknonw' % str(precision))
 
-        self.expression_mean = np.nanmean(self.expression_data.values,axis = 1, keepdims=True)
-        self.covariance_matrix = self.expression_data.T.cov().values
+        self.expression_data = self.expression_data.loc[self.universe_genes, :]
 
-        if tune_delta:
-            self.delta = estimate_delta_jackknife(self.expression_data)
-        else:
-            self.delta = delta
+        # all coexpression computation is delegated to Prism
+        self.prism = Prism(self.expression_data, delta=delta, tune_delta=tune_delta, precision=precision)
+        coexpression_out = self.output_folder + coexpression_folder if keep_coexpression else './prism_coexpress/'
+        self.coexpression = self.prism.compute(keep_output=keep_coexpression, output_folder=coexpression_out)
 
-        
-        if th_motifs>len(self.prior2sample_dict.keys()):
-            for p,ss in self.prior2sample_dict.items():
-                # read the motif data and sort it
+        if not os.path.exists(self.output_folder + 'single_panda/'):
+            os.makedirs(self.output_folder + 'single_panda/')
+
+        if th_motifs > len(self.prior2sample_dict.keys()):
+            for p, ss in self.prior2sample_dict.items():
                 motif_data, tftoadd, genetoadd = self._get_motif(p)
-                for s,sample in enumerate(ss):
-                    sample_start = time.time()
-                    ppi_data = self._get_ppi(sample, missing_tf = tftoadd)
-                    # first run lioness on coexpression
-                    self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder)
-
+                for s, sample in enumerate(ss):
+                    ppi_data = self._get_ppi(sample, missing_tf=tftoadd)
+                    self._run_panda_coexpression(
+                        self.coexpression[sample], ppi_data, motif_data, sample,
+                        computing=computing_panda, alpha=alpha, save_single=True
+                    )
         else:
-            # Now for each sample we compute the lioness network from correlations and 
-            # the panda using the motif and ppi tables
-            for s,sample in enumerate(self.samples):
-                sample_start = time.time()
-                # first run lioness on coexpression
+            for s, sample in enumerate(self.samples):
                 motif_data, tftoadd, genetoadd = self._get_motif(self.sample2prior_dict[sample])
-                ppi_data = self._get_ppi(sample, missing_tf = tftoadd)
-                self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder)
+                ppi_data = self._get_ppi(sample, missing_tf=tftoadd)
+                self._run_panda_coexpression(
+                    self.coexpression[sample], ppi_data, motif_data, sample,
+                    computing=computing_panda, alpha=alpha, save_single=True
+                )
 
+    def _save_single_panda_net(self, net, prior, sample, prefix, pivot=False):
 
-    def _prism_loop(self, ppi_data, motif_data, sample, keep_coexpression = False, save_memory = True, online_coexpression = False, computing_lioness = 'cpu', coexpression_folder = './coexpression/' , computing_panda = 'cpu', alpha = 0.1):
-        """Runs prism on one sample. For now all samples are saved separately.
-
-        Args:
-            correlation_complete (_type_): _description_
-            ppi_data (_type_): _description_
-            motif_data (_type_): _description_
-            sample (_type_): _description_
-            keep_coexpression (bool, optional): _description_. Defaults to False.
-            save_memory (bool, optional): _description_. Defaults to True.
-            online_coexpression (bool, optional): _description_. Defaults to False.
-            computing_lioness (str, optional): _description_. Defaults to 'cpu'.
-            coexpression_folder (str, optional): _description_. Defaults to './coexpression/'.
-            computing_panda (str, optional): _description_. Defaults to 'cpu'.
-            alpha (float, optional): _description_. Defaults to 0.1.
-        """
-        if keep_coexpression:
-            if not os.path.exists(self.output_folder+coexpression_folder):
-                os.makedirs(self.output_folder+coexpression_folder)
-        
-        if not os.path.exists(self.output_folder+'single_panda/'):
-            os.makedirs(self.output_folder+'single_panda/')
-        sample_lioness = self._run_lioness_coexpression(sample, keep_coexpression = keep_coexpression, save_memory = save_memory, online_coexpression = online_coexpression, computing = computing_lioness, coexpression_folder = coexpression_folder)
-
-        final_panda= self._run_panda_coexpression(sample_lioness,ppi_data, motif_data, sample, computing = computing_panda, alpha = alpha, save_single=True)
-        #return(final_panda)
-
-    def _save_single_panda_net(self, net, prior, sample, prefix, pivot = False):
-
-        tab = pd.DataFrame(net, columns = self.universe_genes )
+        tab = pd.DataFrame(net, columns=self.universe_genes)
         tab['tf'] = self.universe_tfs
 
         if pivot:
-            tab.set_index('tf').to_csv(prefix+sample+'.csv')
+            tab.set_index('tf').to_csv(prefix + sample + '.csv')
         else:
-            tab = pd.melt(tab, id_vars='tf', value_vars=tab.columns,var_name='gene', value_name='force')
-            tab['motif'] = prior.flatten(order = 'F')
-            tab.to_csv(prefix+sample+'.txt', sep = '\t', index = False, columns = ['tf', 'gene','motif','force'])
+            tab = pd.melt(tab, id_vars='tf', value_vars=tab.columns, var_name='gene', value_name='force')
+            tab['motif'] = prior.flatten(order='F')
+            tab.to_csv(prefix + sample + '.txt', sep='\t', index=False, columns=['tf', 'gene', 'motif', 'force'])
 
     def _get_motif(self, motif_fn):
-        motif_data,tftoadd, genetoadd = io.read_motif(motif_fn, tf_names = list(self.universe_tfs), gene_names = list(self.universe_genes), pivot = True)
-        return(motif_data, tftoadd,genetoadd)
+        motif_data, tftoadd, genetoadd = io.read_motif(motif_fn, tf_names=list(self.universe_tfs),
+                                                         gene_names=list(self.universe_genes), pivot=True)
+        return (motif_data, tftoadd, genetoadd)
 
-    def _get_ppi(self, sample, missing_tf = None):
+    def _get_ppi(self, sample, missing_tf=None):
         if (self.ppi_mode == 'sample'):
             data = io.read_ppi(self.sample2ppi_dict[sample], self.universe_tfs)
         else:
             data = self.ppi_data
-            # if there are missing tf, the ppi is all null and 
             if missing_tf:
-                data.loc[missing_tf,:]=0
-                data.loc[:,missing_tf]=0
-                #data.loc[missing_tf,missing_tf] = np.eye(len(missing_tf))
+                data.loc[missing_tf, :] = 0
+                data.loc[:, missing_tf] = 0
 
-        return(data)
+        return (data)
 
-    def _run_lioness_coexpression(self, sample, keep_coexpression = False,save_memory = True, online_coexpression = False, computing = 'cpu', cores = 1, coexpression_folder = 'coexpression/'):
-        
-        touse = list(set(self.samples).difference(set([sample])))
-        names = self.expression_data.index.tolist()
-                 
-        #correlation_matrix = self.expression_data.loc[:, touse].T.corr().values
-        # Compute covariance matrix from the rest of the data, leaving out sample
-        # covariance_matrix = self.expression_data.loc[:, touse].T.cov().values
-        
-        #correlation_matrix = self.expression_data.loc[:, touse].T.corr().values
-        
-        # Compute covariance matrix from the rest of the data, leaving out sample
-        # covariance_matrix = self.expression_data.loc[:, touse].T.cov().values
-        
-        # For consistency with R, we are using the N panda_all - (N-1) panda_all_but_q
-        # coexpression has been already multiplied by N all
-        # we no longer need coexpression
-        #lioness_network = coexpression - (
-        #        (self.get_n_matrix(self.expression_data.loc[:, touse])) * correlation_matrix
-        #)
-        
-        # Compute sample-specific covariance matrix
-        sscov = self.delta * np.outer((self.expression_data-self.expression_mean).loc[:, sample], (self.expression_data-self.expression_mean).loc[:, sample]) + (1-self.delta) * self.covariance_matrix
+    def _run_panda_coexpression(self, net, ppi, motif, sample, computing='cpu', alpha=0.1, save_single=False):
 
-        # we no longer need coexpression
-        #lioness_network = coexpression - (
-        #        (self.get_n_matrix(self.expression_data.loc[:, touse])) * correlation_matrix
-        #)
-
-        # Compute sample-specific coexpression matrix from the sample-specific covariance matrix
-        
-        sscov = np.array(sscov)
-        diag = np.sqrt(np.diag(np.diag(sscov)))
-
-        # Replace 0 diagonals by 1, so that the diagonal matrix can be inverted
-        diag = np.array(diag)
-        indices = np.where(np.diag(diag) == 0)[0]
-        for i in indices:
-            diag[i,i] = 1
-            
-        sds = np.linalg.inv(diag)
-        lioness_network = sds @ sscov @ sds
-
-        nmatrix = self.n_matrix - self.get_n_matrix(self.expression_data.loc[:, touse])
-
-        lioness_network = pd.DataFrame(data = np.multiply(nmatrix, lioness_network), index = names, columns=names)
-       
-
-        if (keep_coexpression):
-            cfolder = self.output_folder+coexpression_folder
-            if not os.path.exists(cfolder):
-                os.makedirs(cfolder)
-            path = cfolder+'coexpression_'+sample
-            path_genename = cfolder+'genenames_'+sample
-            if (save_memory):
-                #if self.save_fmt == "txt":
-                #np.savetxt(path+'.txt', coexp)
-                #elif self.save_fmt == "npy":
-                np.save(path+'.npy', lioness_network.values)
-                # write the gene names
-                with open(path_genename+'.txt', 'w') as fp:
-                    for item in names:
-                        # write each item on a new line
-                        fp.write("%s\n" % item)
-                #elif self.save_fmt == "mat":
-                #    from scipy.io import savemat
-                #    savemat(path, {"SSCoexp": coexp})
-            else:
-                pd.DataFrame(data = lioness_network.values, columns=names, index = names).to_csv(cfolder+'coexpression_'+sample+'.txt', sep = ' ')
-        
-        return(lioness_network)
-
-
-
-    def _run_panda_coexpression(self, net, ppi, motif, sample, computing = 'cpu', alpha = 0.1, save_single = False):
-        
         panda_loop_time = time.time()
-        
-        #panda works with all normalised networks
-        if (len(ppi.index)!=np.sum(ppi.index==motif.index)):
+
+        if (len(ppi.index) != np.sum(ppi.index == motif.index)):
             sys.exit('PPI and motif tfs are not matching. DEBUG!')
-        if (len(net.index)!=np.sum(motif.columns==net.index)):
+        if (len(net.index) != np.sum(motif.columns == net.index)):
             sys.exit('coexpression and motif genes are not matching. DEBUG!')
         final = calc.compute_panda(
-            self._normalize_network(net.values),
-            self._normalize_network(ppi.values),
-            self._normalize_network(motif.astype(float).values),
+            calc.normalize_network(net.values),
+            calc.normalize_network(ppi.values),
+            calc.normalize_network(motif.astype(float).values),
             computing=computing,
             alpha=alpha,
         )
         print("Running panda took: %.2f seconds!" % (time.time() - panda_loop_time))
 
         if save_single:
-            self._save_single_panda_net(final, motif.values, sample, prefix = self.output_folder+'single_panda/', pivot = False)
-        return(final)
+            self._save_single_panda_net(final, motif.values, sample, prefix=self.output_folder + 'single_panda/', pivot=False)
+        return (final)
 
-    def get_n_matrix(self,df):
-        # This should be outside of the class
-        """Get number of samples for each correlation value
+    def _normalize_network(self, net):
+        """Normalize a network the way Panda does. Delegates to netZooPy's
+        Panda implementation via a throwaway instance-free call pattern."""
+        return Panda._normalize_network(self, net)
 
-        Args:
-            df (pd.DataFrame): expression with nan values
-        """
-        
-        N = len(df.columns)
-        nn = N-df.isna().sum(axis = 1).values[:,np.newaxis]
-        nr = np.repeat(nn,len(nn), axis = 1)
-        return(np.minimum(nr,nr.T))
 
-def estimate_delta_jackknife(expression_data):
-    """Closed-form jackknife estimate of delta.
-
-    Parameters
-    ----------
-    expression_data : pandas.DataFrame or np.ndarray, shape (g, n)
-        Genes (rows) x samples (columns). Should be the same data used to
-        compute self.covariance_matrix (i.e., already restricted to
-        self.universe_genes).
+def prism_coexpress(expression_file, delta=0.1, tune_delta=True, precision='single',
+                     keep_output=False, output_folder='./prism_coexpress/'):
+    """One-line convenience wrapper around Prism(...).compute(...).
 
     Returns
     -------
-    float
-        Estimated delta.
+    dict[str, pandas.DataFrame]
+        Sample name -> (genes x genes) coexpression matrix.
     """
-    X = np.asarray(expression_data, dtype='float64')
-    g, n = X.shape
-
-    # Population-level diagonal of S: per-gene variance, ddof=1
-    s_kk = X.var(axis=1, ddof=1)  # shape (g,)
-
-    # Closed-form leave-one-sample-out variance per gene, vectorized
-    s1 = X.sum(axis=1, keepdims=True)          # (g, 1)
-    s2 = (X ** 2).sum(axis=1, keepdims=True)   # (g, 1)
-
-    s1_loo = s1 - X                              # (g, n)
-    s2_loo = s2 - X ** 2                         # (g, n)
-    mean_loo = s1_loo / (n - 1)
-    var_loo = (s2_loo - (n - 1) * mean_loo ** 2) / (n - 2)  # (g, n)
-
-    eta = var_loo.var(axis=1, ddof=1)  # (g,) -- one eta^(k) per gene
-
-    numerator = 2 * np.sum(s_kk ** 2)
-    denominator = np.sum(eta)
-
-    nu = 3 + numerator / denominator
-    delta = 1.0 / nu
-    return delta
+    model = Prism(expression_file, delta=delta, tune_delta=tune_delta, precision=precision)
+    return model.compute(keep_output=keep_output, output_folder=output_folder)
 
 
-########################
-### SIMULATION #########
-########################
+def prism_multiomic_coexpress(expression_file, delta=0.1, tune_delta=True, precision='single',
+                               keep_output=False, output_folder='./prism_multiomic_coexpress/'):
+    """One-line convenience wrapper around PrismMultiomic(...).compute(...).
+
+    Returns
+    -------
+    dict[str, pandas.DataFrame]
+        Sample name -> (genes x genes) coexpression matrix, estimated
+        after a nonparanormal transform of the input data.
+    """
+    model = PrismMultiomic(expression_file, delta=delta, tune_delta=tune_delta, precision=precision)
+    return model.compute(keep_output=keep_output, output_folder=output_folder)
+
+
+def prism_GRN(expression_file, priors_table_file, ppi_table_file=None, ppi_file=None,
+              mode_process="union", mode_priors="union", prior_tf_col=0, prior_gene_col=1,
+              output_folder='./prism/', **run_kwargs):
+    """Thin wrapper: coexpression estimation (via Prism) + PANDA GRN inference.
+
+    Equivalent to instantiating PrismGRN and calling .run(**run_kwargs).
+    """
+    model = PrismGRN(
+        expression_file, priors_table_file, ppi_table_file=ppi_table_file, ppi_file=ppi_file,
+        mode_process=mode_process, mode_priors=mode_priors,
+        prior_tf_col=prior_tf_col, prior_gene_col=prior_gene_col, output_folder=output_folder
+    )
+    model.run(**run_kwargs)
+    return model
+
 
 def simulate_prism_data(
     n_genes=50,
@@ -543,7 +621,6 @@ def simulate_prism_data(
     np.random.seed(seed)
     os.makedirs(output_folder, exist_ok=True)
 
-    # SAMPLE COUNTS PER GROUP
     if group_proportions is None:
         n_samples_per_group = [n_samples // n_groups] * n_groups
         n_samples_per_group[-1] += n_samples - sum(n_samples_per_group)
@@ -558,16 +635,14 @@ def simulate_prism_data(
         n_samples_per_group = [int(p * n_samples) for p in group_proportions]
         n_samples_per_group[-1] += n_samples - sum(n_samples_per_group)
 
-    genes   = [f'gene{i}' for i in range(n_genes)]
-    tfs     = [f'tf{i}'   for i in range(n_tfs)]
+    genes = [f'gene{i}' for i in range(n_genes)]
+    tfs = [f'tf{i}' for i in range(n_tfs)]
     samples = [f'sample{i}' for i in range(n_samples)]
 
-    # PPI: random symmetric network
     ppi = (np.random.rand(n_tfs, n_tfs) < ppi_density).astype(float)
     ppi = np.maximum(ppi, ppi.T)
     np.fill_diagonal(ppi, 1)
 
-    # BASE MOTIF: PPI-consistent
     base_motif = (np.random.rand(n_tfs, n_genes) < motif_density).astype(float)
     for i in range(n_tfs):
         for j in range(i + 1, n_tfs):
@@ -581,7 +656,6 @@ def simulate_prism_data(
                 if n_share_j > 0:
                     base_motif[i, np.random.choice(only_j, n_share_j, replace=False)] = 1
 
-    # GROUP MOTIFS: flip frac_diff edges from base
     n_diff = int(frac_diff * n_tfs * n_genes)
 
     def _make_group_motif(base, n_diff):
@@ -592,12 +666,11 @@ def simulate_prism_data(
 
     group_motifs = [_make_group_motif(base_motif, n_diff) for _ in range(n_groups)]
 
-    # EXPRESSION: TF activities drive gene expression
     ppi_cov = ppi + np.eye(n_tfs) * 0.1
     ppi_cov = ppi_cov / ppi_cov.max()
     tf_activities = np.random.multivariate_normal(
         mean=np.zeros(n_tfs), cov=ppi_cov, size=n_samples
-    ).T  # shape: n_tfs x n_samples
+    ).T
 
     expr = np.zeros((n_genes, n_samples))
     sample2group = {}
@@ -613,12 +686,10 @@ def simulate_prism_data(
             sample2group[s] = g
         start += n_g
 
-    # SAVE: expression
     expr_df = pd.DataFrame(expr, index=genes, columns=samples)
     expr_df.index.name = 'gene'
     expr_df.to_csv(output_folder + 'expression.txt', sep='\t')
 
-    # SAVE: motif priors (one file per group)
     def _save_motif(motif, path):
         rows = [
             [tf, gene, 1]
@@ -634,7 +705,6 @@ def simulate_prism_data(
         _save_motif(motif, path)
         motif_paths.append(path)
 
-    # SAVE: PPI
     ppi_rows = [
         [tfs[i], tfs[j], ppi[i, j]]
         for i in range(n_tfs)
@@ -645,7 +715,6 @@ def simulate_prism_data(
         output_folder + 'ppi.txt', sep='\t', index=False, header=False
     )
 
-    # SAVE: priors table
     priors_rows = [
         [s, motif_paths[sample2group[s]]] for s in samples
     ]
@@ -705,17 +774,11 @@ def evaluate_networks(
         true_motif = group_motifs[sample2group[sample]]
 
         net_pivot = net.pivot_table(index='tf', columns='gene', values='force')
-        # Use reindex instead of .loc to handle genes absent from the PANDA output
-        # (genes with no regulating TFs in the motif are missing from the network
-        # file; filling with 0 treats them as unregulated, which is biologically
-        # consistent)
         net_pivot = net_pivot.reindex(index=tfs, columns=genes, fill_value=0)
 
         true_flat = true_motif.flatten()
         pred_flat = net_pivot.values.flatten()
 
-        # AUROC is undefined when the ground truth contains only one class
-        # (e.g., all edges are 0 because no TF regulates any gene in this sample)
         if len(np.unique(true_flat)) < 2:
             print(f"Sample {sample}: skipped (ground truth is all-zero or all-one).")
             continue
