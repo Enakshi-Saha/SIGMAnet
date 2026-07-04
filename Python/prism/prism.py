@@ -260,7 +260,7 @@ class Prism(Panda):
                     sample_start = time.time()
                     ppi_data = self._get_ppi(sample, missing_tf = tftoadd)
                     # first run lioness on coexpression
-                    self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder, delta = delta, tune_delta=tune_delta)
+                    self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder)
 
         else:
             # Now for each sample we compute the lioness network from correlations and 
@@ -270,10 +270,10 @@ class Prism(Panda):
                 # first run lioness on coexpression
                 motif_data, tftoadd, genetoadd = self._get_motif(self.sample2prior_dict[sample])
                 ppi_data = self._get_ppi(sample, missing_tf = tftoadd)
-                self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder, delta = delta, tune_delta=tune_delta)
+                self._prism_loop(ppi_data, motif_data, sample, keep_coexpression=keep_coexpression, save_memory=save_memory, computing_lioness=computing_lioness, computing_panda=computing_panda, alpha = alpha, coexpression_folder=coexpression_folder)
 
 
-    def _prism_loop(self, ppi_data, motif_data, sample, keep_coexpression = False, save_memory = True, online_coexpression = False, computing_lioness = 'cpu', coexpression_folder = './coexpression/' , computing_panda = 'cpu', alpha = 0.1, delta=0.3,tune_delta=False):
+    def _prism_loop(self, ppi_data, motif_data, sample, keep_coexpression = False, save_memory = True, online_coexpression = False, computing_lioness = 'cpu', coexpression_folder = './coexpression/' , computing_panda = 'cpu', alpha = 0.1):
         """Runs prism on one sample. For now all samples are saved separately.
 
         Args:
@@ -295,7 +295,7 @@ class Prism(Panda):
         
         if not os.path.exists(self.output_folder+'single_panda/'):
             os.makedirs(self.output_folder+'single_panda/')
-        sample_lioness = self._run_lioness_coexpression(sample, keep_coexpression = keep_coexpression, save_memory = save_memory, online_coexpression = online_coexpression, computing = computing_lioness, coexpression_folder = coexpression_folder, delta = delta, tune_delta = tune_delta)
+        sample_lioness = self._run_lioness_coexpression(sample, keep_coexpression = keep_coexpression, save_memory = save_memory, online_coexpression = online_coexpression, computing = computing_lioness, coexpression_folder = coexpression_folder)
 
         final_panda= self._run_panda_coexpression(sample_lioness,ppi_data, motif_data, sample, computing = computing_panda, alpha = alpha, save_single=True)
         #return(final_panda)
@@ -329,7 +329,7 @@ class Prism(Panda):
 
         return(data)
 
-    def _run_lioness_coexpression(self, sample, keep_coexpression = False,save_memory = True, online_coexpression = False, computing = 'cpu', cores = 1, coexpression_folder = 'coexpression/', delta = 0.3, tune_delta = False):
+    def _run_lioness_coexpression(self, sample, keep_coexpression = False,save_memory = True, online_coexpression = False, computing = 'cpu', cores = 1, coexpression_folder = 'coexpression/'):
         
         touse = list(set(self.samples).difference(set([sample])))
         names = self.expression_data.index.tolist()
@@ -439,7 +439,7 @@ class Prism(Panda):
         return(np.minimum(nr,nr.T))
 
 def estimate_delta_jackknife(expression_data):
-    """Efficient closed-form jackknife estimate of delta (eq. 2.11 in the paper).
+    """Closed-form jackknife estimate of delta.
 
     Parameters
     ----------
