@@ -511,11 +511,6 @@ class PrismGRN:
             self._save_single_panda_net(final, motif.values, sample, prefix=self.output_folder + 'single_panda/', pivot=False)
         return (final)
 
-    def _normalize_network(self, net):
-        """Normalize a network the way Panda does. Delegates to netZooPy's
-        Panda implementation via a throwaway instance-free call pattern."""
-        return Panda._normalize_network(self, net)
-
 
 def prism_coexpress(expression_file, delta=0.1, tune_delta=True, precision='single',
                      keep_output=False, output_folder='./prism_coexpress/'):
@@ -560,7 +555,37 @@ def prism_GRN(expression_file, priors_table_file, ppi_table_file=None, ppi_file=
     return model
 
 
-def simulate_prism_data(
+########################
+### SHARED SIM UTILS ###
+########################
+
+def _group_sample_counts(n_samples, n_groups, group_proportions):
+    """Split n_samples into n_groups, either evenly or per group_proportions.
+
+    Shared by both the GRN and coexpression simulators so the group-size
+    logic can't drift apart between them.
+    """
+    if group_proportions is None:
+        counts = [n_samples // n_groups] * n_groups
+        counts[-1] += n_samples - sum(counts)
+    else:
+        if len(group_proportions) != n_groups:
+            raise ValueError(
+                f"group_proportions has {len(group_proportions)} elements "
+                f"but n_groups={n_groups}."
+            )
+        if not np.isclose(sum(group_proportions), 1.0):
+            raise ValueError("group_proportions must sum to 1.")
+        counts = [int(p * n_samples) for p in group_proportions]
+        counts[-1] += n_samples - sum(counts)
+    return counts
+
+
+########################
+### GRN SIMULATION #####
+########################
+
+def simulate_prism_GRN_data(
     n_genes=50,
     n_tfs=10,
     n_samples=10,
@@ -573,10 +598,10 @@ def simulate_prism_data(
     seed=42,
     output_folder='sim_data/',
 ):
-    """Simulate synthetic data for Prism benchmarking.
+    """Simulate synthetic data for PrismGRN benchmarking.
 
     Generates gene expression, motif priors, PPI, and a priors table
-    compatible with the Prism input format. Samples are split across
+    compatible with the PrismGRN input format. Samples are split across
     groups according to group_proportions, or evenly if not specified.
 
     Parameters
@@ -621,28 +646,18 @@ def simulate_prism_data(
     np.random.seed(seed)
     os.makedirs(output_folder, exist_ok=True)
 
-    if group_proportions is None:
-        n_samples_per_group = [n_samples // n_groups] * n_groups
-        n_samples_per_group[-1] += n_samples - sum(n_samples_per_group)
-    else:
-        if len(group_proportions) != n_groups:
-            raise ValueError(
-                f"group_proportions has {len(group_proportions)} elements "
-                f"but n_groups={n_groups}."
-            )
-        if not np.isclose(sum(group_proportions), 1.0):
-            raise ValueError("group_proportions must sum to 1.")
-        n_samples_per_group = [int(p * n_samples) for p in group_proportions]
-        n_samples_per_group[-1] += n_samples - sum(n_samples_per_group)
+    n_samples_per_group = _group_sample_counts(n_samples, n_groups, group_proportions)
 
     genes = [f'gene{i}' for i in range(n_genes)]
     tfs = [f'tf{i}' for i in range(n_tfs)]
     samples = [f'sample{i}' for i in range(n_samples)]
 
+    # PPI: random symmetric network
     ppi = (np.random.rand(n_tfs, n_tfs) < ppi_density).astype(float)
     ppi = np.maximum(ppi, ppi.T)
     np.fill_diagonal(ppi, 1)
 
+    # BASE MOTIF: PPI-consistent
     base_motif = (np.random.rand(n_tfs, n_genes) < motif_density).astype(float)
     for i in range(n_tfs):
         for j in range(i + 1, n_tfs):
@@ -656,6 +671,7 @@ def simulate_prism_data(
                 if n_share_j > 0:
                     base_motif[i, np.random.choice(only_j, n_share_j, replace=False)] = 1
 
+    # GROUP MOTIFS: flip frac_diff edges from base
     n_diff = int(frac_diff * n_tfs * n_genes)
 
     def _make_group_motif(base, n_diff):
@@ -666,11 +682,12 @@ def simulate_prism_data(
 
     group_motifs = [_make_group_motif(base_motif, n_diff) for _ in range(n_groups)]
 
+    # EXPRESSION: TF activities drive gene expression
     ppi_cov = ppi + np.eye(n_tfs) * 0.1
     ppi_cov = ppi_cov / ppi_cov.max()
     tf_activities = np.random.multivariate_normal(
         mean=np.zeros(n_tfs), cov=ppi_cov, size=n_samples
-    ).T
+    ).T  # shape: n_tfs x n_samples
 
     expr = np.zeros((n_genes, n_samples))
     sample2group = {}
@@ -686,10 +703,12 @@ def simulate_prism_data(
             sample2group[s] = g
         start += n_g
 
+    # SAVE: expression
     expr_df = pd.DataFrame(expr, index=genes, columns=samples)
     expr_df.index.name = 'gene'
     expr_df.to_csv(output_folder + 'expression.txt', sep='\t')
 
+    # SAVE: motif priors (one file per group)
     def _save_motif(motif, path):
         rows = [
             [tf, gene, 1]
@@ -705,6 +724,7 @@ def simulate_prism_data(
         _save_motif(motif, path)
         motif_paths.append(path)
 
+    # SAVE: PPI
     ppi_rows = [
         [tfs[i], tfs[j], ppi[i, j]]
         for i in range(n_tfs)
@@ -715,6 +735,7 @@ def simulate_prism_data(
         output_folder + 'ppi.txt', sep='\t', index=False, header=False
     )
 
+    # SAVE: priors table
     priors_rows = [
         [s, motif_paths[sample2group[s]]] for s in samples
     ]
@@ -725,24 +746,25 @@ def simulate_prism_data(
     return genes, tfs, samples, group_motifs, sample2group
 
 
-def evaluate_networks(
+def evaluate_prism_GRN(
     output_folder,
     tfs,
     genes,
     sample2group,
     group_motifs,
 ):
-    """Evaluate Prism output networks against known ground-truth motifs.
+    """Evaluate PrismGRN output networks against known ground-truth motifs.
 
     Generalizes evaluation to any number of groups/motifs by using a
-    sample2group mapping (mirrors the sample2prior_dict logic in Prism).
-    Handles genes absent from the PANDA output (e.g., genes not regulated
-    by any TF in the motif) by filling missing entries with 0.
+    sample2group mapping (mirrors the sample2prior_dict logic in
+    PrismGRN). Handles genes absent from the PANDA output (e.g., genes
+    not regulated by any TF in the motif) by filling missing entries
+    with 0.
 
     Parameters
     ----------
     output_folder : str
-        Path to the Prism output folder (expects single_panda/ subfolder).
+        Path to the PrismGRN output folder (expects single_panda/ subfolder).
     tfs : list of str
         Ordered list of TF names used in the simulation.
     genes : list of str
@@ -774,11 +796,17 @@ def evaluate_networks(
         true_motif = group_motifs[sample2group[sample]]
 
         net_pivot = net.pivot_table(index='tf', columns='gene', values='force')
+        # Use reindex instead of .loc to handle genes absent from the PANDA output
+        # (genes with no regulating TFs in the motif are missing from the network
+        # file; filling with 0 treats them as unregulated, which is biologically
+        # consistent)
         net_pivot = net_pivot.reindex(index=tfs, columns=genes, fill_value=0)
 
         true_flat = true_motif.flatten()
         pred_flat = net_pivot.values.flatten()
 
+        # AUROC is undefined when the ground truth contains only one class
+        # (e.g., all edges are 0 because no TF regulates any gene in this sample)
         if len(np.unique(true_flat)) < 2:
             print(f"Sample {sample}: skipped (ground truth is all-zero or all-one).")
             continue
@@ -793,3 +821,289 @@ def evaluate_networks(
         print("\nNo samples could be evaluated.")
 
     return aurocs
+
+
+##############################
+### COEXPRESSION SIMULATION ##
+##############################
+
+def _random_covariance(n_genes, df_scale=2.0, seed=None):
+    """Random positive-definite covariance matrix via a Wishart draw.
+
+    Simpler and more directly relevant to PRISM than simulating a sparse
+    precision matrix and inverting it: PRISM estimates covariance/
+    correlation directly, so the ground truth only needs to be a valid
+    covariance matrix, with no sparsity requirement on its inverse.
+
+    Parameters
+    ----------
+    n_genes : int
+    df_scale : float
+        Wishart degrees of freedom, as a multiple of n_genes. Larger
+        values give less variable (closer to a fixed scale matrix) draws.
+    seed : int or None
+
+    Returns
+    -------
+    np.ndarray, shape (n_genes, n_genes)
+        A draw from Wishart(I, df) / df, so E[cov] = I.
+    """
+    rng = np.random.default_rng(seed)
+    df = int(df_scale * n_genes)
+    A = rng.standard_normal((df, n_genes))
+    cov = A.T @ A / df
+    return cov
+
+
+def _perturb_covariance(base_cov, frac_diff, seed=None):
+    """Produce a second group's covariance by mixing base_cov with a
+    fraction of a fresh random covariance matrix.
+
+    Parameters
+    ----------
+    base_cov : np.ndarray, shape (g, g)
+    frac_diff : float
+        Weight given to the fresh random covariance, in [0, 1]. 0
+        reproduces base_cov exactly; 1 replaces it entirely.
+    seed : int or None
+
+    Returns
+    -------
+    np.ndarray, shape (g, g)
+    """
+    n_genes = base_cov.shape[0]
+    other = _random_covariance(n_genes, seed=seed)
+    return (1 - frac_diff) * base_cov + frac_diff * other
+
+
+def _simulate_grouped_expression(
+    n_genes, n_samples, n_groups, group_proportions,
+    frac_diff, noise_sd, seed,
+):
+    """Shared core for simulate_prism_coexpress_data and
+    simulate_prism_multiomic_data: generates latent (Gaussian) expression
+    data directly from group-specific covariance matrices, plus small
+    measurement noise, with no nonlinear transform applied.
+
+    Returns
+    -------
+    latent_expression : np.ndarray, shape (n_genes, n_samples)
+    genes : list of str
+    samples : list of str
+    group_covariances : list of np.ndarray, shape (n_genes, n_genes)
+        True covariance matrix for each group.
+    sample2group : dict
+    """
+    np.random.seed(seed)
+
+    n_samples_per_group = _group_sample_counts(n_samples, n_groups, group_proportions)
+
+    genes = [f'gene{i}' for i in range(n_genes)]
+    samples = [f'sample{i}' for i in range(n_samples)]
+
+    base_cov = _random_covariance(n_genes, seed=seed)
+    group_covariances = [base_cov] + [
+        _perturb_covariance(base_cov, frac_diff, seed=seed + g + 1)
+        for g in range(n_groups - 1)
+    ]
+
+    latent_expression = np.zeros((n_genes, n_samples))
+    sample2group = {}
+    start = 0
+    for g, n_g in enumerate(n_samples_per_group):
+        idx = slice(start, start + n_g)
+        latent_expression[:, idx] = np.random.multivariate_normal(
+            mean=np.zeros(n_genes), cov=group_covariances[g], size=n_g
+        ).T + np.random.randn(n_genes, n_g) * noise_sd
+        for s in samples[start: start + n_g]:
+            sample2group[s] = g
+        start += n_g
+
+    return latent_expression, genes, samples, group_covariances, sample2group
+
+
+def simulate_prism_coexpress_data(
+    n_genes=50,
+    n_samples=100,
+    n_groups=2,
+    group_proportions=None,
+    frac_diff=0.5,
+    noise_sd=0.1,
+    seed=42,
+    output_folder='sim_data_coexpress/',
+):
+    """Simulate synthetic expression data for prism_coexpress benchmarking.
+
+    Each group has its own random covariance matrix and hence its own
+    true gene-gene correlation network; samples within a group share the
+    same ground truth. Unlike simulate_prism_GRN_data, no motif/PPI/TF
+    data is generated, since prism_coexpress requires only expression
+    data.
+
+    Parameters
+    ----------
+    n_genes : int
+        Number of genes.
+    n_samples : int
+        Total number of samples.
+    n_groups : int
+        Number of sample groups, each with a distinct true covariance.
+    group_proportions : list of float or None
+        Proportion of samples assigned to each group. See
+        simulate_prism_GRN_data for details.
+    frac_diff : float
+        Weight given to a fresh random covariance when constructing each
+        additional group's covariance from the base group's. 0 gives
+        identical groups; 1 gives fully independent group covariances.
+    noise_sd : float
+        Standard deviation of additional per-entry measurement noise.
+    seed : int
+        Random seed for reproducibility.
+    output_folder : str
+        Directory where the simulated expression matrix is saved.
+
+    Returns
+    -------
+    expression : pd.DataFrame, genes x samples
+    genes : list of str
+    samples : list of str
+    group_covariances : list of np.ndarray
+        True covariance matrix for each group.
+    sample2group : dict
+        Maps each sample name to its group index (0-based).
+    """
+    os.makedirs(output_folder, exist_ok=True)
+
+    latent, genes, samples, group_covariances, sample2group = _simulate_grouped_expression(
+        n_genes, n_samples, n_groups, group_proportions,
+        frac_diff, noise_sd, seed,
+    )
+
+    expression = pd.DataFrame(latent, index=genes, columns=samples)
+    expression.index.name = 'gene'
+    expression.to_csv(output_folder + 'expression.txt', sep='\t')
+
+    return expression, genes, samples, group_covariances, sample2group
+
+
+def simulate_prism_multiomic_data(
+    n_genes=50,
+    n_samples=100,
+    n_groups=2,
+    group_proportions=None,
+    frac_diff=0.5,
+    noise_sd=0.1,
+    transform='exp',
+    seed=42,
+    output_folder='sim_data_multiomic/',
+):
+    """Simulate synthetic non-Gaussian expression data for
+    prism_multiomic_coexpress benchmarking.
+
+    Identical to simulate_prism_coexpress_data, except a monotone
+    nonlinear transform is applied element-wise to the latent Gaussian
+    data, producing non-Gaussian marginals. Because the transform is
+    monotone, the returned group_covariances still describe the *latent*
+    correlation structure that prism_multiomic_coexpress's rank-based
+    (Spearman/Kendall) estimation is designed to recover; they do not
+    equal the raw Pearson correlation of the transformed, non-Gaussian
+    data itself.
+
+    Parameters
+    ----------
+    transform : {'exp', 'cube', 'sinh'}
+        Monotone transform applied independently to every entry (and
+        hence, since it is the same scalar function everywhere, to each
+        gene's own marginal).
+    (all other parameters as in simulate_prism_coexpress_data)
+
+    Returns
+    -------
+    expression : pd.DataFrame, genes x samples (non-Gaussian)
+    genes : list of str
+    samples : list of str
+    group_covariances : list of np.ndarray
+        True *latent* covariance matrix for each group (pre-transform).
+    sample2group : dict
+    """
+    os.makedirs(output_folder, exist_ok=True)
+
+    latent, genes, samples, group_covariances, sample2group = _simulate_grouped_expression(
+        n_genes, n_samples, n_groups, group_proportions,
+        frac_diff, noise_sd, seed,
+    )
+
+    if transform == 'exp':
+        transformed = np.exp(latent)
+    elif transform == 'cube':
+        transformed = latent ** 3
+    elif transform == 'sinh':
+        transformed = np.sinh(latent)
+    else:
+        raise ValueError(f"Unknown transform: {transform!r}")
+
+    expression = pd.DataFrame(transformed, index=genes, columns=samples)
+    expression.index.name = 'gene'
+    expression.to_csv(output_folder + 'expression.txt', sep='\t')
+
+    return expression, genes, samples, group_covariances, sample2group
+
+
+def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covariances, genes):
+    """Compare prism_coexpress output to the true group-level correlation
+    matrix each sample was generated from, using per-sample mean squared
+    error, following the evaluation metric of Saha et al. (2024) [BONOBO].
+
+    Also used (unchanged) to evaluate prism_multiomic_coexpress output,
+    since group_covariances there already represents the latent Gaussian
+    correlation structure prism_multiomic_coexpress is designed to recover.
+
+    Parameters
+    ----------
+    estimated_coexpression : dict[str, pd.DataFrame]
+        Output of prism_coexpress / prism_multiomic_coexpress (or
+        Prism(...).compute() / PrismMultiomic(...).compute()).
+    sample2group : dict
+        Maps each sample name to its group index.
+    group_covariances : list of np.ndarray
+        True covariance matrix for each group.
+    genes : list of str
+        Gene ordering matching the covariance matrices.
+
+    Returns
+    -------
+    mses : list of float
+        Per-sample mean squared error between the estimated correlation
+        matrix and the true group correlation matrix.
+    """
+    group_correlations = []
+    for cov in group_covariances:
+        d = np.sqrt(np.diag(cov))
+        group_correlations.append(cov / np.outer(d, d))
+
+    mses = []
+    for sample, group in sample2group.items():
+        if sample not in estimated_coexpression:
+            print(f"Sample {sample}: not found in estimated coexpression, skipping.")
+            continue
+        est = estimated_coexpression[sample].loc[genes, genes].values
+        true = group_correlations[group]
+        mse = np.mean((est - true) ** 2)
+        mses.append(mse)
+        print(f"Sample {sample} MSE: {mse:.4f}")
+
+    if mses:
+        print(f"\nMean MSE: {np.mean(mses):.4f}")
+    else:
+        print("\nNo samples could be evaluated.")
+
+    return mses
+
+
+def evaluate_prism_multiomic(estimated_coexpression, sample2group, group_covariances, genes):
+    """Alias for evaluate_prism_coexpress, kept as a separate name for
+    symmetry with simulate_prism_multiomic_data. The ground truth is the
+    same latent Gaussian correlation structure in both cases, so no
+    behavior differs; see evaluate_prism_coexpress for details.
+    """
+    return evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covariances, genes)
