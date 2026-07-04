@@ -438,6 +438,45 @@ class Prism(Panda):
         nr = np.repeat(nn,len(nn), axis = 1)
         return(np.minimum(nr,nr.T))
 
+def estimate_delta_jackknife(expression_data):
+    """Efficient closed-form jackknife estimate of delta (eq. 2.11 in the paper).
+
+    Parameters
+    ----------
+    expression_data : pandas.DataFrame or np.ndarray, shape (g, n)
+        Genes (rows) x samples (columns). Should be the same data used to
+        compute self.covariance_matrix (i.e., already restricted to
+        self.universe_genes).
+
+    Returns
+    -------
+    float
+        Estimated delta.
+    """
+    X = np.asarray(expression_data, dtype='float64')
+    g, n = X.shape
+
+    # Population-level diagonal of S: per-gene variance, ddof=1
+    s_kk = X.var(axis=1, ddof=1)  # shape (g,)
+
+    # Closed-form leave-one-sample-out variance per gene, vectorized
+    s1 = X.sum(axis=1, keepdims=True)          # (g, 1)
+    s2 = (X ** 2).sum(axis=1, keepdims=True)   # (g, 1)
+
+    s1_loo = s1 - X                              # (g, n)
+    s2_loo = s2 - X ** 2                         # (g, n)
+    mean_loo = s1_loo / (n - 1)
+    var_loo = (s2_loo - (n - 1) * mean_loo ** 2) / (n - 2)  # (g, n)
+
+    eta = var_loo.var(axis=1, ddof=1)  # (g,) -- one eta^(k) per gene
+
+    numerator = 2 * np.sum(s_kk ** 2)
+    denominator = np.sum(eta)
+
+    nu = 3 + numerator / denominator
+    delta = 1.0 / nu
+    return delta
+
 
 ########################
 ### SIMULATION #########
