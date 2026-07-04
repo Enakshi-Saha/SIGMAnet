@@ -1012,12 +1012,11 @@ def simulate_prism_multiomic_data(
 
     Identical to simulate_prism_coexpress_data, except a monotone
     nonlinear transform is applied element-wise to the latent Gaussian
-    data, producing non-Gaussian marginals. Because the transform is
-    monotone, the returned group_covariances still describe the *latent*
-    correlation structure that prism_multiomic_coexpress's rank-based
-    (Spearman/Kendall) estimation is designed to recover; they do not
-    equal the raw Pearson correlation of the transformed, non-Gaussian
-    data itself.
+    data, producing non-Gaussian marginals. The returned group_covariances
+    describe the *latent* correlation structure that
+    prism_multiomic_coexpress is designed to recover after its own
+    marginal Gaussianizing transform is applied; they do not equal the
+    raw Pearson correlation of the (non-Gaussian) simulated data itself.
 
     Parameters
     ----------
