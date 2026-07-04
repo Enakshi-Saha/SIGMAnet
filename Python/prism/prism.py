@@ -246,6 +246,11 @@ class Prism(Panda):
         self.expression_mean = np.nanmean(self.expression_data.values,axis = 1, keepdims=True)
         self.covariance_matrix = self.expression_data.T.cov().values
 
+        if tune_delta:
+            self.delta = estimate_delta_jackknife(self.expression_data)
+        else:
+            self.delta = delta
+
         
         if th_motifs>len(self.prior2sample_dict.keys()):
             for p,ss in self.prior2sample_dict.items():
@@ -338,11 +343,6 @@ class Prism(Panda):
         # Compute covariance matrix from the rest of the data, leaving out sample
         # covariance_matrix = self.expression_data.loc[:, touse].T.cov().values
         
-        # Compute posterior weight delta from data
-        if (tune_delta):
-            delta = 1/( 3 + 2 * np.sqrt(self.covariance_matrix.diagonal()).mean()/self.covariance_matrix.diagonal().var())
-
-       
         # For consistency with R, we are using the N panda_all - (N-1) panda_all_but_q
         # coexpression has been already multiplied by N all
         # we no longer need coexpression
@@ -351,7 +351,7 @@ class Prism(Panda):
         #)
         
         # Compute sample-specific covariance matrix
-        sscov = delta * np.outer((self.expression_data-self.expression_mean).loc[:, sample], (self.expression_data-self.expression_mean).loc[:, sample]) + (1-delta) * self.covariance_matrix
+        sscov = self.delta * np.outer((self.expression_data-self.expression_mean).loc[:, sample], (self.expression_data-self.expression_mean).loc[:, sample]) + (1-self.delta) * self.covariance_matrix
 
         # we no longer need coexpression
         #lioness_network = coexpression - (
