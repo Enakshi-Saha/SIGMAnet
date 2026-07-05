@@ -1079,14 +1079,25 @@ def simulate_prism_multiomic_data(
     return expression, genes, samples, group_covariances, sample2group
 
 
-def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covariances, genes):
+def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covariances, genes,
+                              edge_threshold=None):
     """Compare prism_coexpress output to the true group-level correlation
-    matrix each sample was generated from, using per-sample mean squared
-    error, following the evaluation metric of Saha et al. (2024) [BONOBO].
+    matrix each sample was generated from, using three complementary
+    metrics computed per sample:
 
-    Also used (unchanged) to evaluate prism_multiomic_coexpress output,
-    since group_covariances there already represents the latent Gaussian
-    correlation structure prism_multiomic_coexpress is designed to recover.
+    - MSE: overall magnitude of error across all entries (Saha et al.
+      2024 [BONOBO] convention).
+    - Pearson correlation (flattened estimate vs. flattened truth):
+      whether the estimate tracks the true correlation structure
+      proportionally, independent of any systematic shrinkage-induced
+      compression toward V.
+    - AUC: whether the estimate correctly ranks true edges (|true
+      correlation| > edge_threshold) above non-edges, using the
+      estimated correlation magnitudes as scores. Only computed if
+      edge_threshold is given and the ground truth has a meaningful
+      mix of edges and non-edges; otherwise skipped, since AUC is not
+      meaningful against a fully dense ground truth with no natural
+      edge/non-edge distinction.
 
     Parameters
     ----------
@@ -1099,35 +1110,70 @@ def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covaria
         True covariance matrix for each group.
     genes : list of str
         Gene ordering matching the covariance matrices.
+    edge_threshold : float or None
+        If given, off-diagonal true-correlation entries with absolute
+        value above this threshold are treated as "true edges" for AUC.
+        If None, AUC is not computed (appropriate for a dense ground
+        truth with no sparse edge structure, e.g. simulate_prism_coexpress_data).
 
     Returns
     -------
-    mses : list of float
-        Per-sample mean squared error between the estimated correlation
-        matrix and the true group correlation matrix.
+    dict with keys 'mse', 'pearson', and (if edge_threshold given) 'auc',
+    each a list of per-sample values (samples that couldn't be evaluated
+    are skipped and omitted, with a printed note).
     """
+    from scipy.stats import pearsonr
+
     group_correlations = []
     for cov in group_covariances:
         d = np.sqrt(np.diag(cov))
         group_correlations.append(cov / np.outer(d, d))
 
-    mses = []
+    g = len(genes)
+    off_diag_mask = ~np.eye(g, dtype=bool)
+
+    mses, pearsons, aucs = [], [], []
+
+    if edge_threshold is not None:
+        from sklearn.metrics import roc_auc_score
+
     for sample, group in sample2group.items():
         if sample not in estimated_coexpression:
             print(f"Sample {sample}: not found in estimated coexpression, skipping.")
             continue
         est = estimated_coexpression[sample].loc[genes, genes].values
         true = group_correlations[group]
+
         mse = np.mean((est - true) ** 2)
         mses.append(mse)
-        print(f"Sample {sample} MSE: {mse:.4f}")
 
-    if mses:
-        print(f"\nMean MSE: {np.mean(mses):.4f}")
-    else:
-        print("\nNo samples could be evaluated.")
+        est_flat = est[off_diag_mask]
+        true_flat = true[off_diag_mask]
+        r, _ = pearsonr(est_flat, true_flat)
+        pearsons.append(r)
 
-    return mses
+        msg = f"Sample {sample} MSE: {mse:.4f}  Pearson: {r:.4f}"
+
+        if edge_threshold is not None:
+            true_edges = (np.abs(true_flat) > edge_threshold).astype(int)
+            if len(np.unique(true_edges)) < 2:
+                print(f"Sample {sample}: skipped AUC (ground truth is all-edge or all-non-edge at this threshold).")
+            else:
+                auc = roc_auc_score(true_edges, np.abs(est_flat))
+                aucs.append(auc)
+                msg += f"  AUC: {auc:.3f}"
+
+        print(msg)
+
+    print(f"\nMean MSE: {np.mean(mses):.4f}")
+    print(f"Mean Pearson: {np.mean(pearsons):.4f}")
+    if edge_threshold is not None and aucs:
+        print(f"Mean AUC: {np.mean(aucs):.3f}")
+
+    result = {'mse': mses, 'pearson': pearsons}
+    if edge_threshold is not None:
+        result['auc'] = aucs
+    return result
 
 
 def evaluate_prism_multiomic(estimated_coexpression, sample2group, group_covariances, genes):
