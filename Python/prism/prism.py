@@ -143,13 +143,10 @@ def compute_sample_coexpression(sample, expression_data, expression_mean,
     # on the diagonal, rather than a (1-delta)-shrunk version of it.
     sscov = np.where(observed_mask, sscov, covariance_matrix)
 
-    diag = np.sqrt(np.diag(np.diag(sscov)))
-    diag = np.array(diag)
-    zero_idx = np.where(np.diag(diag) == 0)[0]
-    for i in zero_idx:
-        diag[i, i] = 1
-    sds = np.linalg.inv(diag)
-    coexpression = sds @ sscov @ sds
+    diag_vals = np.diag(sscov).copy()
+    diag_vals[diag_vals == 0] = 1
+    sqrt_diag = np.sqrt(diag_vals)
+    coexpression = sscov / np.outer(sqrt_diag, sqrt_diag)
 
     coexpression = pd.DataFrame(data=coexpression, index=names, columns=names)
     return coexpression
