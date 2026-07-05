@@ -925,6 +925,98 @@ def _random_sparse_correlation(n_genes, edge_density=0.1, seed=None):
     return corr, true_edges
 
 
+def simulate_prism_coexpress_sparse_data(
+    n_genes=50,
+    n_samples=100,
+    n_groups=2,
+    group_proportions=None,
+    edge_density=0.1,
+    frac_diff=0.5,
+    noise_sd=0.1,
+    seed=42,
+    output_folder='sim_data_coexpress_sparse/',
+):
+    """Simulate synthetic expression data with a sparse true correlation
+    structure, for AUC-based edge-recovery evaluation.
+
+    Unlike simulate_prism_coexpress_data (dense Wishart-derived
+    covariances, with no natural true-edge/non-edge distinction), each
+    group's correlation matrix here has a known, explicit sparse edge
+    set, making AUC-based evaluation of edge recovery meaningful.
+
+    Parameters
+    ----------
+    n_genes : int
+    n_samples : int
+    n_groups : int
+    group_proportions : list of float or None
+        See simulate_prism_GRN_data for details.
+    edge_density : float
+        Proportion of gene pairs that are true edges in the base group.
+    frac_diff : float
+        Fraction of the base group's edges that are replaced with a
+        fresh random edge set when constructing each additional group.
+    noise_sd : float
+        Standard deviation of additional per-entry measurement noise.
+    seed : int
+    output_folder : str
+
+    Returns
+    -------
+    expression : pd.DataFrame, genes x samples
+    genes : list of str
+    samples : list of str
+    group_covariances : list of np.ndarray
+        True covariance (here, correlation) matrix for each group.
+    group_true_edges : list of np.ndarray (bool)
+        True edge matrix for each group, aligned with group_covariances.
+    sample2group : dict
+    """
+    os.makedirs(output_folder, exist_ok=True)
+    rng = np.random.default_rng(seed)
+
+    n_samples_per_group = _group_sample_counts(n_samples, n_groups, group_proportions)
+
+    genes = [f'gene{i}' for i in range(n_genes)]
+    samples = [f'sample{i}' for i in range(n_samples)]
+
+    base_corr, base_edges = _random_sparse_correlation(
+        n_genes, edge_density=edge_density, seed=seed
+    )
+
+    group_covariances = [base_corr]
+    group_true_edges = [base_edges]
+    for g in range(n_groups - 1):
+        other_corr, other_edges = _random_sparse_correlation(
+            n_genes, edge_density=edge_density, seed=seed + g + 1
+        )
+        blended_corr = (1 - frac_diff) * base_corr + frac_diff * other_corr
+        d = np.sqrt(np.diag(blended_corr))
+        blended_corr = blended_corr / np.outer(d, d)
+        blended_edges = np.where(rng.random((n_genes, n_genes)) < frac_diff, other_edges, base_edges)
+        np.fill_diagonal(blended_edges, False)
+        group_covariances.append(blended_corr)
+        group_true_edges.append(blended_edges)
+
+    latent_expression = np.zeros((n_genes, n_samples))
+    sample2group = {}
+    start = 0
+    for g, n_g in enumerate(n_samples_per_group):
+        idx = slice(start, start + n_g)
+        latent_expression[:, idx] = np.random.multivariate_normal(
+            mean=np.zeros(n_genes), cov=group_covariances[g], size=n_g
+        ).T + np.random.randn(n_genes, n_g) * noise_sd
+        for s in samples[start: start + n_g]:
+            sample2group[s] = g
+        start += n_g
+
+    expression = pd.DataFrame(latent_expression, index=genes, columns=samples)
+    expression.index.name = 'gene'
+    expression.to_csv(output_folder + 'expression.txt', sep='\t')
+
+    return expression, genes, samples, group_covariances, group_true_edges, sample2group
+
+
 def _perturb_covariance(base_cov, frac_diff, seed=None):
     """Produce a second group's covariance by mixing base_cov with a
     fraction of a fresh random covariance matrix.
@@ -1119,7 +1211,7 @@ def simulate_prism_multiomic_data(
 
 
 def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covariances, genes,
-                              edge_threshold=None):
+                              edge_threshold=None, group_true_edges=None):
     """Compare prism_coexpress output to the true group-level correlation
     matrix each sample was generated from, using three complementary
     metrics computed per sample:
@@ -1130,13 +1222,9 @@ def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covaria
       whether the estimate tracks the true correlation structure
       proportionally, independent of any systematic shrinkage-induced
       compression toward V.
-    - AUC: whether the estimate correctly ranks true edges (|true
-      correlation| > edge_threshold) above non-edges, using the
-      estimated correlation magnitudes as scores. Only computed if
-      edge_threshold is given and the ground truth has a meaningful
-      mix of edges and non-edges; otherwise skipped, since AUC is not
-      meaningful against a fully dense ground truth with no natural
-      edge/non-edge distinction.
+    - AUC: whether the estimate correctly ranks true edges above
+      non-edges, using the estimated correlation magnitudes as scores.
+      Computed only if edge_threshold or group_true_edges is given.
 
     Parameters
     ----------
@@ -1152,14 +1240,18 @@ def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covaria
     edge_threshold : float or None
         If given, off-diagonal true-correlation entries with absolute
         value above this threshold are treated as "true edges" for AUC.
-        If None, AUC is not computed (appropriate for a dense ground
-        truth with no sparse edge structure, e.g. simulate_prism_coexpress_data).
+        Ignored if group_true_edges is given.
+    group_true_edges : list of np.ndarray (bool) or None
+        If given (e.g. from simulate_prism_coexpress_sparse_data), used
+        directly as the true edge set for AUC, taking precedence over
+        edge_threshold. Preferred whenever the ground truth has an
+        explicit known edge set, rather than thresholding a dense
+        correlation matrix by magnitude.
 
     Returns
     -------
-    dict with keys 'mse', 'pearson', and (if edge_threshold given) 'auc',
-    each a list of per-sample values (samples that couldn't be evaluated
-    are skipped and omitted, with a printed note).
+    dict with keys 'mse', 'pearson', and (if AUC was requested) 'auc',
+    each a list of per-sample values.
     """
     from scipy.stats import pearsonr
 
@@ -1172,8 +1264,9 @@ def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covaria
     off_diag_mask = ~np.eye(g, dtype=bool)
 
     mses, pearsons, aucs = [], [], []
+    compute_auc = (edge_threshold is not None) or (group_true_edges is not None)
 
-    if edge_threshold is not None:
+    if compute_auc:
         from sklearn.metrics import roc_auc_score
 
     for sample, group in sample2group.items():
@@ -1193,10 +1286,14 @@ def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covaria
 
         msg = f"Sample {sample} MSE: {mse:.4f}  Pearson: {r:.4f}"
 
-        if edge_threshold is not None:
-            true_edges = (np.abs(true_flat) > edge_threshold).astype(int)
+        if compute_auc:
+            if group_true_edges is not None:
+                true_edges = group_true_edges[group][off_diag_mask].astype(int)
+            else:
+                true_edges = (np.abs(true_flat) > edge_threshold).astype(int)
+
             if len(np.unique(true_edges)) < 2:
-                print(f"Sample {sample}: skipped AUC (ground truth is all-edge or all-non-edge at this threshold).")
+                print(f"Sample {sample}: skipped AUC (ground truth is all-edge or all-non-edge).")
             else:
                 auc = roc_auc_score(true_edges, np.abs(est_flat))
                 aucs.append(auc)
@@ -1206,19 +1303,21 @@ def evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covaria
 
     print(f"\nMean MSE: {np.mean(mses):.4f}")
     print(f"Mean Pearson: {np.mean(pearsons):.4f}")
-    if edge_threshold is not None and aucs:
+    if compute_auc and aucs:
         print(f"Mean AUC: {np.mean(aucs):.3f}")
 
     result = {'mse': mses, 'pearson': pearsons}
-    if edge_threshold is not None:
+    if compute_auc:
         result['auc'] = aucs
     return result
 
 
-def evaluate_prism_multiomic(estimated_coexpression, sample2group, group_covariances, genes):
+def evaluate_prism_multiomic(estimated_coexpression, sample2group, group_covariances, genes,
+                              edge_threshold=None, group_true_edges=None):
     """Alias for evaluate_prism_coexpress, kept as a separate name for
     symmetry with simulate_prism_multiomic_data. The ground truth is the
     same latent Gaussian correlation structure in both cases, so no
     behavior differs; see evaluate_prism_coexpress for details.
     """
-    return evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covariances, genes)
+    return evaluate_prism_coexpress(estimated_coexpression, sample2group, group_covariances, genes,
+                                     edge_threshold=edge_threshold, group_true_edges=group_true_edges)
