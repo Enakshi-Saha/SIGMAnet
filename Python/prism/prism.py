@@ -88,59 +88,23 @@ def estimate_delta_jackknife(expression_data):
     delta = 1.0 / nu
     return delta
 
-def compute_sample_coexpression(sample, expression_data, expression_mean,
-                                 covariance_matrix, delta, n_matrix_full):
-    """Compute the sample-specific coexpression matrix for one sample.
+def compute_sample_coexpression(sample_idx, expression_values, expression_mean,
+                                 covariance_matrix, delta, nn_full, obs_mask, names):
+    x = expression_values[:, sample_idx]
+    observed = obs_mask[:, sample_idx]
 
-    This is the single shared implementation used by Prism.compute(), so
-    any future correction only needs to be made here.
-
-    Parameters
-    ----------
-    sample : str
-        Column name of the sample in expression_data.
-    expression_data : pd.DataFrame
-        genes x samples, may contain NaNs.
-    expression_mean : np.ndarray, shape (g, 1)
-        Grand mean per gene.
-    covariance_matrix : np.ndarray, shape (g, g)
-        Population covariance S.
-    delta : float
-        Shrinkage weight.
-    n_matrix_full : np.ndarray, shape (g, g)
-        Pairwise sample-count matrix for the full dataset.
-
-    Returns
-    -------
-    pd.DataFrame, shape (g, g)
-    """
-    names = expression_data.index.tolist()
-    touse = [s for s in expression_data.columns if s != sample]
-
-    # Zero-fill missing entries before the outer product. A NaN here would
-    # otherwise propagate through np.linalg.inv and corrupt the ENTIRE
-    # coexpression matrix. The zero-filled placeholder is discarded below
-    # for any gene pair touching an unobserved gene, so its exact value
-    # doesn't matter.
-    centered_sample = (expression_data - expression_mean).loc[:, sample].fillna(0)
+    centered_sample = np.where(observed, x - expression_mean.ravel(), 0.0)
 
     sscov = delta * np.outer(centered_sample, centered_sample) + (1 - delta) * covariance_matrix
-    sscov = np.array(sscov)
 
-    n_loo = get_n_matrix(expression_data.loc[:, touse])
-    nmatrix = n_matrix_full - n_loo
-    # nmatrix is 0/1: removing a single sample changes a pairwise minimum
-    # count by at most 1, so this difference is always binary despite
-    # being built from counts. It marks, for each gene pair, whether this
-    # sample's own data contributed to that pair's observed count.
+    # nmatrix[i,j] derived directly from nn_full and this sample's observed
+    # mask (O(g^2)), instead of rebuilding the full leave-one-out
+    # get_n_matrix from the (g, n-1) subset every call (O(g*n), plus slow
+    # pandas .loc column-list indexing).
+    nn_loo = nn_full - observed.astype(int)
+    nmatrix = np.minimum(nn_full[:, None], nn_full[None, :]) - np.minimum(nn_loo[:, None], nn_loo[None, :])
     observed_mask = nmatrix.astype(bool)
 
-    # Missing-data fallback (Section 2.5 / eq. 2.14 of the paper), applied
-    # at the covariance level before standardization: any entry touching
-    # an unobserved gene falls back exactly to the prior covariance
-    # V^(jk), rather than the shrunk (delta-weighted) value computed
-    # above. This also gives unobserved genes the correct prior variance
-    # on the diagonal, rather than a (1-delta)-shrunk version of it.
     sscov = np.where(observed_mask, sscov, covariance_matrix)
 
     diag_vals = np.diag(sscov).copy()
@@ -148,8 +112,7 @@ def compute_sample_coexpression(sample, expression_data, expression_mean,
     sqrt_diag = np.sqrt(diag_vals)
     coexpression = sscov / np.outer(sqrt_diag, sqrt_diag)
 
-    coexpression = pd.DataFrame(data=coexpression, index=names, columns=names)
-    return coexpression
+    return pd.DataFrame(data=coexpression, index=names, columns=names)
 
 
 class Prism:
@@ -186,6 +149,10 @@ class Prism:
         self.covariance_matrix = self.expression_data.T.cov().values
 
         self.delta = estimate_delta_jackknife(self.expression_data) if tune_delta else delta
+        
+        self.expression_values = self.expression_data.values
+        self.obs_mask = ~np.isnan(self.expression_values)
+        self.nn_full = self.obs_mask.sum(axis=1)
 
     def _load(self, expression_file, precision):
         atype = 'float32' if precision == 'single' else 'float64'
@@ -195,32 +162,18 @@ class Prism:
         return data.astype(atype)
 
     def compute(self, keep_output=False, output_folder='./prism_coexpress/'):
-        """Estimate the sample-specific coexpression matrix for every sample.
-
-        Parameters
-        ----------
-        keep_output : bool
-            Save each sample's matrix to output_folder if True.
-        output_folder : str
-
-        Returns
-        -------
-        dict[str, pandas.DataFrame]
-            Sample name -> (genes x genes) coexpression matrix.
-        """
         if keep_output and not os.path.exists(output_folder):
             os.makedirs(output_folder)
-
+    
         results = {}
-        for sample in self.samples:
+        for i, sample in enumerate(self.samples):
             coexp = compute_sample_coexpression(
-                sample, self.expression_data, self.expression_mean,
-                self.covariance_matrix, self.delta, self.n_matrix_full
+                i, self.expression_values, self.expression_mean,
+                self.covariance_matrix, self.delta, self.nn_full, self.obs_mask, self.genes
             )
             results[sample] = coexp
             if keep_output:
                 coexp.to_csv(f'{output_folder}coexpression_{sample}.txt', sep='\t')
-
         return results
 
 
