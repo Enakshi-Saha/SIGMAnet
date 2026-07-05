@@ -47,7 +47,7 @@ Future methods planned for SIGMAnet:
 - ECLIPSE: Empirical Bayes Covariance Learning with Imputation 
   for Personalized Statistical Estimation (sample-specific 
   correlation with missing data handling for single-cell data)
-- PRISM: Personalized Regulation Inference via Sample-specific 
+- PRISM: Personalized Regulation Inference via Sample-specific; PRISM with clustering for cluster-specific prior?
   Modelling (sample-specific GRN)
 - MIRAGE: Multi-omic Individual-specific RegulArized GGM Estimation (Smaug reformulated) or SIMIAN (Sample-specific Inference of Multi-omic InterAction Networks)
 - Sample-specific factor analysis (X = WB + Error, where 
