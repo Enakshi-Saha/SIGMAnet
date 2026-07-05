@@ -32,12 +32,20 @@ def get_n_matrix(df):
 
 
 def estimate_delta_jackknife(expression_data):
-    """Closed-form jackknife estimate of delta.
+    """Closed-form jackknife estimate of delta, NaN-aware.
+
+    Handles missing data per-gene: each gene's full-data variance and
+    leave-one-out variances use only that gene's own non-missing samples
+    (count n_k), rather than assuming n samples are available for every
+    gene. For a sample j where gene k is itself missing, dropping sample
+    j does not change gene k's variance (its value was never included in
+    that gene's computation to begin with), so the leave-one-out variance
+    there is set equal to the full-data variance for that gene.
 
     Parameters
     ----------
     expression_data : pandas.DataFrame or np.ndarray, shape (g, n)
-        Genes (rows) x samples (columns).
+        Genes (rows) x samples (columns). May contain NaNs.
 
     Returns
     -------
@@ -47,17 +55,31 @@ def estimate_delta_jackknife(expression_data):
     X = np.asarray(expression_data, dtype='float64')
     g, n = X.shape
 
-    s_kk = X.var(axis=1, ddof=1)  # shape (g,)
+    obs = ~np.isnan(X)
+    n_k = obs.sum(axis=1).astype('float64')  # per-gene observed count
 
-    s1 = X.sum(axis=1, keepdims=True)
-    s2 = (X ** 2).sum(axis=1, keepdims=True)
+    X0 = np.nan_to_num(X, nan=0.0)
+    s1 = X0.sum(axis=1)
+    s2 = (X0 ** 2).sum(axis=1)
 
-    s1_loo = s1 - X
-    s2_loo = s2 - X ** 2
-    mean_loo = s1_loo / (n - 1)
-    var_loo = (s2_loo - (n - 1) * mean_loo ** 2) / (n - 2)
+    mean_k = s1 / n_k
+    s_kk = (s2 - n_k * mean_k ** 2) / (n_k - 1)  # full per-gene variance
 
-    eta = var_loo.var(axis=1, ddof=1)
+    s1_loo = s1[:, None] - X0
+    s2_loo = s2[:, None] - X0 ** 2
+    n_loo = n_k[:, None] - obs.astype('float64')  # n_k-1 where observed, n_k where missing
+
+    with np.errstate(invalid='ignore', divide='ignore'):
+        mean_loo = s1_loo / n_loo
+        var_loo = (s2_loo - n_loo * mean_loo ** 2) / (n_loo - 1)
+
+    # Where gene k is missing for sample j, the "leave-one-out" variance
+    # is undefined/meaningless from the formula above (n_loo wasn't
+    # actually decremented); overwrite with the full-data variance,
+    # since removing a missing entry changes nothing for that gene.
+    var_loo = np.where(obs, var_loo, s_kk[:, None])
+
+    eta = var_loo.var(axis=1, ddof=1)  # one eta^(k) per gene
 
     numerator = 2 * np.sum(s_kk ** 2)
     denominator = np.sum(eta)
@@ -65,7 +87,6 @@ def estimate_delta_jackknife(expression_data):
     nu = 3 + numerator / denominator
     delta = 1.0 / nu
     return delta
-
 
 def compute_sample_coexpression(sample, expression_data, expression_mean,
                                  covariance_matrix, delta, n_matrix_full):
