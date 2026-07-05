@@ -49,7 +49,7 @@ Future methods planned for SIGMAnet:
   correlation with missing data handling for single-cell data)
 - PRISM: Personalized Regulation Inference via Sample-specific 
   Modelling (sample-specific GRN)
-- MIRAGE: Multi-omic Individual-specific RegulArized GGM Estimation (Smaug reformulated)
+- MIRAGE: Multi-omic Individual-specific RegulArized GGM Estimation (Smaug reformulated) or SIMIAN (Sample-specific Inference of Multi-omic InterAction Networks)
 - Sample-specific factor analysis (X = WB + Error, where 
   Cov(X) is sample-specific)
 -->
