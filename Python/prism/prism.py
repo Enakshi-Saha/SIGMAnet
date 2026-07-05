@@ -973,6 +973,7 @@ def simulate_prism_coexpress_sparse_data(
     sample2group : dict
     """
     os.makedirs(output_folder, exist_ok=True)
+    np.random.seed(seed)
     rng = np.random.default_rng(seed)
 
     n_samples_per_group = _group_sample_counts(n_samples, n_groups, group_proportions)
