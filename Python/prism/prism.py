@@ -885,6 +885,45 @@ def _random_covariance(n_genes, df_scale=2.0, seed=None):
     cov = A.T @ A / df
     return cov
 
+def _random_sparse_correlation(n_genes, edge_density=0.1, seed=None):
+    """Random sparse correlation matrix with a known true edge set,
+    guaranteed positive semi-definite by construction (no eigenvalue
+    projection needed): a diagonally dominant symmetric matrix is
+    automatically PSD (Gershgorin), so setting each diagonal entry to
+    exceed the sum of absolute off-diagonal entries in its row avoids
+    the need for any post-hoc correction.
+
+    Parameters
+    ----------
+    n_genes : int
+    edge_density : float
+        Proportion of off-diagonal entries assigned a nonzero value.
+    seed : int or None
+
+    Returns
+    -------
+    corr : np.ndarray, shape (n_genes, n_genes)
+        A valid (positive semi-definite, unit-diagonal) correlation matrix.
+    true_edges : np.ndarray, shape (n_genes, n_genes), dtype bool
+        Symmetric boolean matrix marking the off-diagonal pairs assigned
+        a nonzero value before normalization.
+    """
+    rng = np.random.default_rng(seed)
+
+    A = np.eye(n_genes)
+    mask = np.triu((rng.random((n_genes, n_genes)) < edge_density), k=1)
+    values = rng.uniform(-1, 1, size=(n_genes, n_genes))
+    A = np.where(mask, values, 0.0)
+    A = A + A.T
+    true_edges = (A != 0)
+
+    np.fill_diagonal(A, np.sum(np.abs(A), axis=1) + 0.0001)
+
+    d = np.sqrt(np.diag(A))
+    corr = A / np.outer(d, d)
+
+    return corr, true_edges
+
 
 def _perturb_covariance(base_cov, frac_diff, seed=None):
     """Produce a second group's covariance by mixing base_cov with a
