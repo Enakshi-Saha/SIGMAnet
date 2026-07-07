@@ -50,6 +50,5 @@ Future methods planned for SIGMAnet:
 - PRISM: Personalized Regulation Inference via Sample-specific; PRISM with clustering for cluster-specific prior?
   Modelling (sample-specific GRN)
 - MIRAGE: Multi-omic Individual-specific RegulArized GGM Estimation (Smaug reformulated) or SIMIAN (Sample-specific Inference of Multi-omic InterAction Networks)
-- Sample-specific factor analysis (X = WB + Error, where 
-  Cov(X) is sample-specific)
+- CIPHER: Covariate-Informed Prior-anchored Hierarchical Empirical-bayes Regulatory-network inference (GRN using cEBMF and Horseshoe Prior with PPI and Methylation added)
 -->
