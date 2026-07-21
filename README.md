@@ -5,7 +5,7 @@
 # SIGMAnet: Sample-specific and Integrated Graphical Models for Association Networks
 
 SIGMAnet is a Python package for estimating individual-specific 
-molecular networks from omics data. The current release includes 
+molecular networks from omics data using Bayesian models. The current release includes 
 **SIREN** (Sample-specific Inference via Regularized 
 Empirical-Bayes Networks), a method for estimating 
 individual-specific partial correlation networks from 
